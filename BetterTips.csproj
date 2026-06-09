@@ -1,0 +1,116 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+    <PropertyGroup Label="Target">
+        <PlatformTarget>x64</PlatformTarget>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <Platforms>x64</Platforms>
+        <Configurations>Debug;Release</Configurations>
+    </PropertyGroup>
+
+    <!-- Assembly Configuration -->
+    <PropertyGroup>
+        <AssemblyName>BetterTips</AssemblyName>
+        <AssemblyVersion>0.1.0.0</AssemblyVersion>
+        <FileVersion>0.1.0.0</FileVersion>
+        <InformationalVersion>0.1.0.0</InformationalVersion>
+    </PropertyGroup>
+
+    <!-- Build Configuration -->
+    <PropertyGroup>
+        <OutputType>Library</OutputType>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+        <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+        <DebugSymbols>true</DebugSymbols>
+        <DebugType>full</DebugType>
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+        <Nullable>enable</Nullable>
+        <WarningsAsErrors>Nullable</WarningsAsErrors>
+        <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    </PropertyGroup>
+
+    <!-- Release Configuration -->
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
+        <Deterministic>true</Deterministic>
+    </PropertyGroup>
+
+    <!-- Dalamud Configuration -->
+    <PropertyGroup>
+        <DalamudCIDist>release</DalamudCIDist>
+        <DalamudVersion>dev</DalamudVersion>
+        <DalamudLocal>../dalamud/</DalamudLocal>
+        <DalamudLibPath Condition="'$(DALAMUD_HOME)' == ''">$(MSBuildProjectDirectory)/$(DalamudLocal)</DalamudLibPath>
+    </PropertyGroup>
+
+    <!-- Assembly Reference Locations -->
+    <PropertyGroup>
+        <AssemblySearchPaths>
+            $(AssemblySearchPaths);
+            $(DalamudLocal);
+            $(DalamudLibPath);
+        </AssemblySearchPaths>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <Content Include=".gitignore"/>
+        <Content Include="BetterTips.json"/>
+        <Content Include="README.md"/>
+    </ItemGroup>
+
+    <!--
+      DalamudPackager's NormalizePath() rewrites every zip entry name through
+      Path.DirectorySeparatorChar before storing. On Windows that's '\\', which is invalid
+      as a ZIP path separator — extractors see a flat filename instead of a directory tree.
+      We rebuild latest.zip after the default packager step to (a) force '/' separators on
+      every entry, and (b) drop the PDB. (Only runs on Release packaging.)
+    -->
+    <UsingTask TaskName="RepackPluginZip" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+        <ParameterGroup>
+            <ZipPath Required="true" ParameterType="System.String"/>
+        </ParameterGroup>
+        <Task>
+            <Using Namespace="System"/>
+            <Using Namespace="System.Collections.Generic"/>
+            <Using Namespace="System.IO"/>
+            <Using Namespace="System.IO.Compression"/>
+            <Using Namespace="System.Linq"/>
+            <Code Type="Fragment" Language="cs"><![CDATA[
+                if (!File.Exists(ZipPath)) return true;
+                var stage = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+                Directory.CreateDirectory(stage);
+                try {
+                    ZipFile.ExtractToDirectory(ZipPath, stage);
+                    File.Delete(ZipPath);
+
+                    var trash = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".DS_Store", "Thumbs.db", "desktop.ini" };
+                    foreach (var f in Directory.EnumerateFiles(stage, "*", SearchOption.AllDirectories).ToList()) {
+                        var name = Path.GetFileName(f);
+                        if (name.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase) || trash.Contains(name))
+                            File.Delete(f);
+                    }
+
+                    var prefixLen = stage.Length + 1;
+                    using (var fs = File.Create(ZipPath))
+                    using (var archive = new ZipArchive(fs, ZipArchiveMode.Create)) {
+                        foreach (var f in Directory.EnumerateFiles(stage, "*", SearchOption.AllDirectories).OrderBy(s => s, StringComparer.Ordinal)) {
+                            var rel = f.Substring(prefixLen).Replace('\\', '/');
+                            archive.CreateEntryFromFile(f, rel, CompressionLevel.Optimal);
+                            Log.LogMessage(MessageImportance.High, "  + " + rel);
+                        }
+                    }
+                    Log.LogMessage(MessageImportance.High, "Repacked " + ZipPath);
+                } finally {
+                    try { Directory.Delete(stage, true); } catch { }
+                }
+            ]]></Code>
+        </Task>
+    </UsingTask>
+
+    <Target Name="RepackZipAfterPackager"
+            AfterTargets="DefaultDalamudPackagerRelease"
+            Condition="'$(Configuration)' == 'Release'">
+        <RepackPluginZip ZipPath="$(OutputPath)$(AssemblyName)\latest.zip"/>
+    </Target>
+</Project>

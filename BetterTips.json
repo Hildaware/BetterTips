@@ -1,0 +1,14 @@
+{
+  "Name": "BetterTips",
+  "Author": "Sel",
+  "Punchline": "Trim the clutter from item tooltips.",
+  "Description": "Strips the lines you don't care about out of item tooltips. Pick which sections to hide (durability, spiritbond, extractable/projectable/desynthesizable, flavor text, control hints, and more) from a simple settings window.",
+  "InternalName": "BetterTips",
+  "RepoUrl": "https://github.com/Hildaware/BetterTips",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "UI",
+    "tooltips",
+    "items"
+  ]
+}
