@@ -12,6 +12,8 @@ public enum TooltipSection
     Stats,
     ExtractProjectDesynth,
     DurabilitySpiritbondRepair,
+    MateriaMelding,
+    VendorMarket,
     Description,
     ControlHints
 }

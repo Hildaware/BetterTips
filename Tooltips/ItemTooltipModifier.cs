@@ -18,7 +18,8 @@ namespace BetterTips.Tooltips;
 ///         call the original first and always return its result, (2) wrap all of our own work in a catch,
 ///         and (3) null- and bounds-check every native access before touching it. An access violation is
 ///         a corrupted-state exception that <c>catch</c> cannot stop, so those checks — not the
-///         try/catch — are the real protection.
+///         try/catch — are the real protection. We edit the array before the original renders it, then
+///         always call the original and return its result.
 ///     </para>
 /// </summary>
 public sealed unsafe class ItemTooltipModifier : IDisposable
@@ -79,36 +80,35 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
     private nint GenerateItemTooltipDetour(AtkUnitBase* addonItemDetail, NumberArrayData* numberArrayData,
         StringArrayData* stringArrayData)
     {
-        // Let the game fully populate the tooltip arrays first, then trim what we don't want.
-        // (_hook is guaranteed non-null here: the detour can only fire after HookFromSignature returned
-        // and assigned it, then Enable() was called.)
-        var ret = _hook!.Original(addonItemDetail, numberArrayData, stringArrayData);
-
-        // A null array would AV on dereference below — and an AV cannot be caught — so bail before the
-        // try, still returning the game's own result untouched.
-        if (stringArrayData is null) return ret;
-
-        try
+        // The tooltip string array is already populated when this fires; the original GenerateItemTooltip
+        // RENDERS it into the addon's text nodes. So we must edit the array BEFORE calling the original —
+        // editing afterward has no visible effect because the nodes are already set. (This is the order
+        // SimpleTweaks uses.) A null array would AV on dereference (uncatchable), so guard it.
+        if (stringArrayData is not null)
         {
-            if (_dumpRequested)
+            try
             {
-                _dumpRequested = false;
-                DumpFields(stringArrayData);
-            }
+                if (_dumpRequested)
+                {
+                    _dumpRequested = false;
+                    DumpFields(stringArrayData);
+                }
 
-            if (_config.Enabled)
+                if (_config.Enabled)
+                {
+                    var indices = _hiddenIndices; // atomic snapshot; replaced wholesale, never mutated in place
+                    foreach (var index in indices)
+                        BlankField(stringArrayData, index);
+                }
+            }
+            catch (Exception ex)
             {
-                var indices = _hiddenIndices; // atomic snapshot; the array is replaced wholesale, never mutated in place
-                foreach (var index in indices)
-                    BlankField(stringArrayData, index);
+                _log.Error(ex, "BetterTips: error while modifying item tooltip (left as-is).");
             }
         }
-        catch (Exception ex)
-        {
-            _log.Error(ex, "BetterTips: error while modifying item tooltip (left as-is).");
-        }
 
-        return ret;
+        // Always call the original and return its result, even if our edits threw above.
+        return _hook!.Original(addonItemDetail, numberArrayData, stringArrayData);
     }
 
     /// <summary>Overwrite a tooltip line with an empty string so the addon collapses it.</summary>

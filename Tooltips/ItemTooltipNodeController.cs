@@ -31,6 +31,11 @@ public sealed unsafe class ItemTooltipNodeController : IDisposable
     // Recomputed on config change; replaced as a whole reference (atomic) so the callback never sees a
     // half-mutated collection.
     private ItemDetailGroup[] _hiddenGroups = [];
+    private uint[] _hiddenBlocks = [];
+    private uint[] _hiddenNodeIds = [];
+
+    // Set by "/btips dumpnodes"; on the next addon update we log the node tree, then clear it.
+    private volatile bool _nodeDumpRequested;
 
     public ItemTooltipNodeController(IAddonLifecycle addonLifecycle, Configuration.Configuration config, IPluginLog log)
     {
@@ -47,30 +52,50 @@ public sealed unsafe class ItemTooltipNodeController : IDisposable
     public void Rebuild()
     {
         _hiddenGroups = TooltipFieldMap.GroupsFor(_config.HiddenSections);
+        _hiddenBlocks = TooltipFieldMap.BlocksFor(_config.HiddenSections);
+        _hiddenNodeIds = TooltipFieldMap.NodeIdsFor(_config.HiddenSections);
+    }
+
+    /// <summary>Request a node-tree dump of the ItemDetail addon on the next update (dev aid for finding leftover label nodes).</summary>
+    public void RequestNodeDump()
+    {
+        _nodeDumpRequested = true;
     }
 
     private void OnAddonPostUpdate(AddonEvent type, AddonArgs args)
     {
-        if (!_config.Enabled) return;
-
-        var groups = _hiddenGroups;
-        if (groups.Length == 0) return;
-
         try
         {
             var addon = (AddonItemDetail*)args.Addon.Address;
             if (addon is null) return;
 
-            foreach (var group in groups)
+            if (_nodeDumpRequested)
+            {
+                _nodeDumpRequested = false;
+                DumpNodeTree(addon);
+            }
+
+            if (!_config.Enabled) return;
+
+            foreach (var group in _hiddenGroups)
             {
                 var node = ResolveGroupNode(addon, group);
                 if (node is not null)
                     node->ToggleVisibility(false);
             }
+
+            foreach (var nodeId in _hiddenNodeIds)
+            {
+                var node = addon->GetNodeById(nodeId);
+                if (node is not null)
+                    node->ToggleVisibility(false);
+            }
+
+            HideBlocksAndReflow(addon);
         }
         catch (Exception ex)
         {
-            _log.Error(ex, "BetterTips: error hiding tooltip node group (tooltip left as-is).");
+            _log.Error(ex, "BetterTips: error in ItemDetail node post-update (tooltip left as-is).");
         }
     }
 
@@ -82,6 +107,149 @@ public sealed unsafe class ItemTooltipNodeController : IDisposable
         ItemDetailGroup.Materialize => (AtkResNode*)addon->MaterializeText,
         _ => null
     };
+
+    /// <summary>
+    ///     Hides each section-block container the user disabled, then closes the vertical gap: every block
+    ///     below a removed one is shifted up by the removed height, and the whole tooltip is shrunk to
+    ///     match. Re-applied each update because the game re-lays-out the tooltip from scratch every change.
+    /// </summary>
+    private void HideBlocksAndReflow(AddonItemDetail* addon)
+    {
+        if (_hiddenBlocks.Length == 0) return;
+
+        var root = addon->RootNode;
+        if (root is null) return;
+        var rootId = root->NodeId;
+
+        // Hide each target block, recording the Y/height of those that were actually visible this frame.
+        Span<float> removedY = stackalloc float[_hiddenBlocks.Length];
+        Span<float> removedH = stackalloc float[_hiddenBlocks.Length];
+        var removedCount = 0;
+
+        foreach (var id in _hiddenBlocks)
+        {
+            var block = addon->GetNodeById(id);
+            if (block is null) continue;
+            if ((block->NodeFlags & NodeFlags.Visible) == 0) continue; // already hidden (by us last frame, or the game)
+
+            removedY[removedCount] = block->Y;
+            removedH[removedCount] = block->Height;
+            removedCount++;
+            block->ToggleVisibility(false);
+        }
+
+        if (removedCount == 0) return;
+
+        float totalRemoved = 0;
+        for (var i = 0; i < removedCount; i++)
+            totalRemoved += removedH[i];
+
+        // Shift every still-visible sibling block up by the height removed above it.
+        var list = addon->UldManager.NodeList;
+        var count = addon->UldManager.NodeListCount;
+        for (var i = 0; i < count; i++)
+        {
+            var node = list[i];
+            if (node is null || node->ParentNode is null || node->ParentNode->NodeId != rootId) continue;
+            if ((node->NodeFlags & NodeFlags.Visible) == 0) continue;
+
+            float shift = 0;
+            for (var k = 0; k < removedCount; k++)
+                if (removedY[k] < node->Y) shift += removedH[k];
+
+            if (shift > 0)
+                node->SetYFloat(node->Y - shift);
+        }
+
+        // Shrink the whole tooltip by the removed height. SetSize handles the content area and the
+        // root-level collision, but not the visible bordered frame, so resize that separately below.
+        var newHeight = root->Height - totalRemoved;
+        if (newHeight < 1) newHeight = 1;
+        addon->SetSize(root->Width, (ushort)newHeight);
+        addon->UpdateCollisionNodeList(false);
+
+        // The window frame is the tallest visible non-collision child of the root; SetSize leaves it at
+        // full height, so shrink its node and its nine-grid/collision parts to match.
+        AtkResNode* frame = null;
+        for (var i = 0; i < count; i++)
+        {
+            var node = list[i];
+            if (node is null || node->ParentNode is null || node->ParentNode->NodeId != rootId) continue;
+            if ((node->NodeFlags & NodeFlags.Visible) == 0 || node->Type == NodeType.Collision) continue;
+            if (frame is null || node->Height > frame->Height) frame = node;
+        }
+
+        if (frame is not null && frame->Height > totalRemoved)
+            ResizeFrame(frame, totalRemoved);
+    }
+
+    private static void ResizeFrame(AtkResNode* frame, float amount)
+    {
+        frame->SetHeight((ushort)(frame->Height - amount));
+
+        // For a window-background component, the visible border is a nine-grid inside it that must be
+        // shrunk too (and its collision part). Other children keep their size.
+        if ((uint)frame->Type < 1000) return;
+
+        var component = ((AtkComponentNode*)frame)->Component;
+        if (component is null) return;
+
+        var list = component->UldManager.NodeList;
+        var count = component->UldManager.NodeListCount;
+        for (var i = 0; i < count; i++)
+        {
+            var node = list[i];
+            if (node is null) continue;
+            if ((node->Type == NodeType.NineGrid || node->Type == NodeType.Collision) && node->Height > amount)
+                node->SetHeight((ushort)(node->Height - amount));
+        }
+    }
+
+    /// <summary>
+    ///     Dev aid: logs the ItemDetail node tree (id / type / visibility / Y / Height / text) by walking the
+    ///     real parent/child tree, so the section-block hierarchy and heights are visible — that's what's
+    ///     needed to reposition blocks and close the gap left by hiding one. Budget- and depth-capped.
+    /// </summary>
+    private void DumpNodeTree(AddonItemDetail* addon)
+    {
+        // The flat node list is the complete enumeration (ItemDetail's content isn't reachable from
+        // RootNode's child chain). Logging each node's parent id reconstructs the hierarchy, and the
+        // height/Y let us plan a reposition to close the gap left by hiding a block.
+        _log.Information("BetterTips: ItemDetail nodes (#id <parent | type vis y=Y h=Height \"text\"):");
+
+        var list = addon->UldManager.NodeList;
+        if (list is null) return;
+
+        var count = addon->UldManager.NodeListCount;
+        for (var i = 0; i < count && i < 400; i++)
+        {
+            var node = list[i];
+            if (node is not null)
+                LogNode(node);
+        }
+    }
+
+    private void LogNode(AtkResNode* node)
+    {
+        var visible = (node->NodeFlags & NodeFlags.Visible) != 0;
+        var parentId = node->ParentNode is not null ? node->ParentNode->NodeId : 0;
+
+        var text = "";
+        if (node->Type == NodeType.Text)
+        {
+            try
+            {
+                var s = ((AtkTextNode*)node)->NodeText.ToString();
+                if (!string.IsNullOrEmpty(s)) text = $" \"{s.Replace("\n", "\\n")}\"";
+            }
+            catch
+            {
+                text = " <text?>";
+            }
+        }
+
+        _log.Information($"#{node->NodeId} <#{parentId} {node->Type} vis={visible} y={node->Y:0} h={node->Height:0}{text}");
+    }
 
     public void Dispose()
     {

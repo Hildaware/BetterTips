@@ -75,7 +75,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the BetterTips settings window. \"/bettertips dump\" logs the hovered item's tooltip fields."
+            HelpMessage = "Open settings. \"/bettertips dump\" logs tooltip string fields; \"dumpnodes\" logs the node tree."
         });
         _commandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
         {
@@ -100,18 +100,27 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
-        if (args.Trim().Equals("dump", StringComparison.OrdinalIgnoreCase))
+        switch (args.Trim().ToLowerInvariant())
         {
-            // The dump reads the tooltip string array, so it needs the signature hook to be live.
-            if (_stringHook.IsActive)
-                _stringHook.RequestDump();
-            else
-                _log.Information("BetterTips: dump needs the string-array hook, which isn't active on this game version.");
-            _log.Information("BetterTips: hover an item to dump its tooltip fields to the log (/xllog).");
-            return;
-        }
+            case "dump":
+                // Reads the tooltip string array, so it needs the signature hook to be live.
+                if (_stringHook.IsActive)
+                    _stringHook.RequestDump();
+                else
+                    _log.Information("BetterTips: dump needs the string-array hook, which isn't active on this game version.");
+                _log.Information("BetterTips: hover an item to dump its tooltip string fields to the log (/xllog).");
+                return;
 
-        _configWindow.Toggle();
+            case "dumpnodes":
+                // Signature-free: walks the ItemDetail node tree to find leftover static label nodes.
+                _nodeController.RequestNodeDump();
+                _log.Information("BetterTips: hover an item to dump its ItemDetail node tree to the log (/xllog).");
+                return;
+
+            default:
+                _configWindow.Toggle();
+                return;
+        }
     }
 
     private void OpenConfigUi()

@@ -1,10 +1,8 @@
 namespace BetterTips.Tooltips;
 
 /// <summary>
-///     The named node groups the <c>ItemDetail</c> addon exposes via FFXIVClientStructs. Hiding one of
-///     these is signature-free and robust — FFXIVClientStructs maintains the field offsets — so this is the
-///     primary hide path. Several groups also contain non-text elements (the Spiritbond/Condition bars, the
-///     FC crest) that have no string to blank, so node hiding is the only way to remove them.
+///     The named node groups the <c>ItemDetail</c> addon exposes via FFXIVClientStructs. The game reflows
+///     these itself when hidden, so they need no manual repositioning.
 /// </summary>
 public enum ItemDetailGroup
 {
@@ -15,69 +13,90 @@ public enum ItemDetailGroup
 }
 
 /// <summary>
-///     Display metadata plus the two kinds of hide target a <see cref="TooltipSection" /> can have:
-///     <see cref="Groups" /> are hidden by node visibility (signature-free, primary), and
-///     <see cref="StringIndices" /> are blanked in the tooltip's <c>StringArrayData</c> by the signature
-///     hook (cleanest collapse, used when the signature resolves). A section may use either or both; the
-///     two subsystems each process their own target kind independently.
+///     Display metadata plus the hide targets for a <see cref="TooltipSection" />:
+///     <list type="bullet">
+///         <item><see cref="Groups" /> — named node groups; the game reflows these, hidden as-is.</item>
+///         <item><see cref="Blocks" /> — top-level section-block node ids; hidden AND manually reflowed
+///             (the blocks below are shifted up and the window shrunk to close the gap).</item>
+///         <item><see cref="NodeIds" /> — other sub-element nodes; hidden, no reflow.</item>
+///         <item><see cref="StringIndices" /> — string-array fields blanked by the signature hook.</item>
+///     </list>
 /// </summary>
 public sealed record TooltipSectionInfo(
     TooltipSection Section,
     string Label,
     string Description,
     ItemDetailGroup[] Groups,
+    uint[] Blocks,
+    uint[] NodeIds,
     int[] StringIndices);
 
 /// <summary>
 ///     Maps each user-facing <see cref="TooltipSection" /> to its hide targets. String indices are seeded
 ///     from SimpleTweaksPlugin's <c>ItemTooltipField</c> enum; node groups come from
-///     <c>FFXIVClientStructs.FFXIV.Client.UI.AddonItemDetail</c>. Both are refined with a live
-///     <c>/btips dump</c> and in-game node inspection (repair/melding detail, item level text, vendor
-///     price, bind status still need indices/nodes pinned down).
+///     <c>FFXIVClientStructs.FFXIV.Client.UI.AddonItemDetail</c>; block/node ids were read from a live
+///     <c>/btips dumpnodes</c>. Node ids are stable within a game version but can shift when SE revises the
+///     tooltip ULD — re-dump and update if a major UI patch lands.
 /// </summary>
 public static class TooltipFieldMap
 {
     public static readonly IReadOnlyList<TooltipSectionInfo> Sections =
     [
+        // Item category is one line inside the shared name/header block (#17), so it can't be a reflowed
+        // block; hide just its text node + blank the string. (Leaves a small space in the header.)
         new(TooltipSection.ItemCategory, "Item category",
             "The category line (e.g. \"Arm Armor\").",
-            [], [2]),
+            [], [], [35], [2]),
         new(TooltipSection.EquipRestriction, "Item level, class/job & level",
-            "Item level, equippable classes/jobs, and required level (one addon group).",
-            [ItemDetailGroup.EquipRestriction], []),
+            "Item level, equippable classes/jobs, and required level.",
+            [], [62], [], []),
         new(TooltipSection.Stats, "Stats & parameters",
-            "Damage / defense lines and attribute parameters.",
-            [ItemDetailGroup.HeaderStats], [16, 37, 38, 39, 40, 41, 42]),
+            "Damage / defense block and the attribute Bonuses block.",
+            [], [36, 97], [], [16, 37, 38, 39, 40, 41, 42]),
         new(TooltipSection.ExtractProjectDesynth, "Extractable / Projectable / Desynthesizable",
             "The materia-extraction / glamour-projection / desynthesis flags line.",
-            [ItemDetailGroup.Materialize], [35]),
+            [ItemDetailGroup.Materialize], [], [], [35]),
+        // The whole "Crafting & Repairs" block (#68) — Condition, Spiritbond, Repair Level, Materials,
+        // Quick Repairs, and the Materia Melding requirement line (which lives inside this block).
         new(TooltipSection.DurabilitySpiritbondRepair, "Durability / Spiritbond / repair",
-            "Durability (condition) and Spiritbond bars plus their percentage text.",
-            [ItemDetailGroup.SpiritbondConditionCrest], [28, 30]),
+            "The whole Crafting & Repairs block (Condition, Spiritbond, Repair Level, Materials, Quick Repairs, melding requirement).",
+            [], [68], [], [28, 29, 30, 31, 32, 33]),
+        // The melded-materia slot display is its own block (#93).
+        new(TooltipSection.MateriaMelding, "Materia (melded slots)",
+            "The melded-materia slot display block.",
+            [], [93], [], [52]),
+        new(TooltipSection.VendorMarket, "Vendor / market price",
+            "\"Sells for ... gil\" / market status and the shop selling price line.",
+            [], [43, 47], [], [25, 63]),
         new(TooltipSection.Description, "Flavor / description",
-            "The lore/description paragraph.",
-            [], [13]),
+            "The lore/description paragraph block.",
+            [], [40], [], [13]),
         new(TooltipSection.ControlHints, "Control hints",
             "The keybind row at the bottom (Equip / Discard / etc.).",
-            [], [64])
+            [], [2], [], [64])
     ];
 
-    /// <summary>The distinct string-array indices to blank for the given hidden sections (signature-hook path).</summary>
+    /// <summary>String-array indices to blank for the hidden sections (signature-hook path).</summary>
     public static int[] IndicesFor(IReadOnlyCollection<TooltipSection> hidden)
-    {
-        if (hidden.Count == 0) return [];
-        return Sections.Where(s => hidden.Contains(s.Section))
-            .SelectMany(s => s.StringIndices)
-            .Distinct()
-            .ToArray();
-    }
+        => Collect(hidden, s => s.StringIndices);
 
-    /// <summary>The distinct node groups to hide for the given hidden sections (signature-free node path).</summary>
+    /// <summary>Named node groups to hide for the hidden sections (game reflows these).</summary>
     public static ItemDetailGroup[] GroupsFor(IReadOnlyCollection<TooltipSection> hidden)
+        => Collect(hidden, s => s.Groups);
+
+    /// <summary>Section-block node ids to hide and reflow for the hidden sections.</summary>
+    public static uint[] BlocksFor(IReadOnlyCollection<TooltipSection> hidden)
+        => Collect(hidden, s => s.Blocks);
+
+    /// <summary>Sub-element node ids to hide (no reflow) for the hidden sections.</summary>
+    public static uint[] NodeIdsFor(IReadOnlyCollection<TooltipSection> hidden)
+        => Collect(hidden, s => s.NodeIds);
+
+    private static T[] Collect<T>(IReadOnlyCollection<TooltipSection> hidden, Func<TooltipSectionInfo, T[]> selector)
     {
         if (hidden.Count == 0) return [];
         return Sections.Where(s => hidden.Contains(s.Section))
-            .SelectMany(s => s.Groups)
+            .SelectMany(selector)
             .Distinct()
             .ToArray();
     }
