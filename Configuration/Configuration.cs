@@ -22,6 +22,9 @@ public sealed class Configuration : IPluginConfiguration
         TooltipSection.DurabilitySpiritbondRepair
     ];
 
+    /// <summary>Which corner stays fixed when a tooltip is shrunk. Default keeps the bottom-left put.</summary>
+    public TooltipAnchor Anchor { get; set; } = TooltipAnchor.BottomLeft;
+
     public int Version { get; set; } = 1;
 
     public void Save(IDalamudPluginInterface pi)

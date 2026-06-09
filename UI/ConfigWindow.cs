@@ -13,6 +13,12 @@ namespace BetterTips.UI;
 /// </summary>
 public sealed class ConfigWindow : Window
 {
+    private static readonly TooltipAnchor[] Anchors =
+        [TooltipAnchor.TopLeft, TooltipAnchor.TopRight, TooltipAnchor.BottomLeft, TooltipAnchor.BottomRight];
+
+    private static readonly string[] AnchorLabels =
+        ["Top-left", "Top-right", "Bottom-left", "Bottom-right"];
+
     private readonly Configuration.Configuration _config;
     private readonly Action _onChanged;
 
@@ -36,6 +42,30 @@ public sealed class ConfigWindow : Window
             _config.Enabled = enabled;
             changed = true;
         }
+
+        ImGui.Separator();
+
+        ImGui.TextDisabled("When shrinking, keep this corner fixed:");
+        var anchorIdx = Array.IndexOf(Anchors, _config.Anchor);
+        if (anchorIdx < 0) anchorIdx = 0;
+        ImGui.SetNextItemWidth(180f);
+        using (ImRaii.Disabled(!_config.Enabled))
+        {
+            if (ImGui.BeginCombo("##anchor", AnchorLabels[anchorIdx]))
+            {
+                for (var i = 0; i < Anchors.Length; i++)
+                    if (ImGui.Selectable(AnchorLabels[i], i == anchorIdx))
+                    {
+                        _config.Anchor = Anchors[i];
+                        changed = true;
+                    }
+
+                ImGui.EndCombo();
+            }
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip("Left/right only differ if the tooltip's width changes (it currently doesn't).");
 
         ImGui.Separator();
         ImGui.TextDisabled("Tooltip sections to show (unchecked = hidden):");

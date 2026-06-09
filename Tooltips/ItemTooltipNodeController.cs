@@ -181,6 +181,13 @@ public sealed unsafe class ItemTooltipNodeController : IDisposable
 
         if (frame is not null && frame->Height > totalRemoved)
             ResizeFrame(frame, totalRemoved);
+
+        // Anchor: keep the chosen corner fixed as the tooltip shrinks. Only the height changes, so only
+        // the vertical half matters — bottom anchors move the window down by the removed height so its
+        // bottom edge stays put; top anchors leave the position alone. (Left/right is a no-op until width
+        // changes.)
+        if (_config.Anchor is TooltipAnchor.BottomLeft or TooltipAnchor.BottomRight)
+            addon->SetPosition(addon->X, (short)(addon->Y + (int)totalRemoved));
     }
 
     private static void ResizeFrame(AtkResNode* frame, float amount)
