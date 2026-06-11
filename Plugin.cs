@@ -4,6 +4,7 @@ using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
+using KamiToolKit;
 
 namespace BetterTips;
 
@@ -15,8 +16,9 @@ public sealed class Plugin : IDalamudPlugin
 
     private readonly ICommandManager _commandManager;
     private readonly ConfigWindow _configWindow;
+    private readonly GearSetBlockProvider _gearSet;
     private readonly IPluginLog _log;
-    private readonly ItemTooltipNodeController _nodeController;
+    private readonly TooltipRelayoutController _relayout;
     private readonly IDalamudPluginInterface _pluginInterface;
     private readonly ItemTooltipModifier _stringHook;
     private readonly WindowSystem _windowSystem;
@@ -26,6 +28,7 @@ public sealed class Plugin : IDalamudPlugin
         ICommandManager commandManager,
         IGameInteropProvider interopProvider,
         IAddonLifecycle addonLifecycle,
+        IGameGui gameGui,
         IPluginLog log)
     {
         _pluginInterface = pluginInterface;
@@ -45,8 +48,58 @@ public sealed class Plugin : IDalamudPlugin
             config = new Configuration.Configuration();
         }
 
-        // Primary path: signature-free node-group hiding via IAddonLifecycle. Always active.
-        _nodeController = new ItemTooltipNodeController(addonLifecycle, config, log);
+        // Migrate older saved configs to the current defaults. v2 adds the "Advanced Melding Forbidden"
+        // hide (a new section can't be in a config saved before it existed), so opt existing users in.
+        if (config.Version < 2)
+        {
+            config.HiddenSections.Add(TooltipSection.AdvancedMelding);
+            config.Version = 2;
+            try
+            {
+                config.Save(pluginInterface);
+            }
+            catch (Exception ex)
+            {
+                log.Error(ex, "BetterTips: failed to persist migrated config.");
+            }
+        }
+
+        // Normalize the saved section order into a clean permutation of the known sections. An earlier build
+        // could persist duplicates (it appended the default order onto an already-populated list, doubling
+        // every entry), so rebuild the list: keep the first occurrence of each known section (dedupe + drop
+        // any stale/unknown values), then append any genuinely missing sections. Gear Sets is now an
+        // order-aware section like any other, so it keeps whatever slot the user gave it (no parking).
+        // Idempotent; only persists when the result actually changed.
+        var normalizedOrder = new List<LayoutSection>();
+        foreach (var section in config.SectionOrder)
+            if (TooltipLayout.Find(section) is not null && !normalizedOrder.Contains(section))
+                normalizedOrder.Add(section);
+        foreach (var section in TooltipLayout.DefaultOrder)
+            if (!normalizedOrder.Contains(section))
+                normalizedOrder.Add(section);
+
+        if (!normalizedOrder.SequenceEqual(config.SectionOrder))
+        {
+            config.SectionOrder = normalizedOrder;
+            try
+            {
+                config.Save(pluginInterface);
+            }
+            catch (Exception ex)
+            {
+                log.Error(ex, "BetterTips: failed to persist section-order migration.");
+            }
+        }
+
+        // KamiToolKit backs the "Gear Sets" block's native nodes. Initialize it before any node is created.
+        KamiToolKitLibrary.Initialize(pluginInterface, "BetterTips");
+
+        // The gear-set block provider is driven by the relayout controller (so it lays out as part of the
+        // single pass), so it must exist first. It reads its lookup from a shared, throttled GearSetIndex.
+        _gearSet = new GearSetBlockProvider(addonLifecycle, gameGui, config, new GearSetIndex(), log);
+
+        // Primary path: the signature-free single-pass relayout (hide + reorder + gear-set) via IAddonLifecycle.
+        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet);
         // Fallback/enhancement: a signature hook that blanks text-only lines for the cleanest collapse.
         // Only active if the signature resolves; otherwise it self-disables to a harmless no-op.
         _stringHook = new ItemTooltipModifier(interopProvider, config, log);
@@ -58,7 +111,7 @@ public sealed class Plugin : IDalamudPlugin
             try
             {
                 config.Save(_pluginInterface);
-                _nodeController.Rebuild();
+                _relayout.Rebuild();
                 _stringHook.Rebuild();
             }
             catch (Exception ex)
@@ -95,7 +148,11 @@ public sealed class Plugin : IDalamudPlugin
         _pluginInterface.UiBuilder.Draw -= _windowSystem.Draw;
 
         _stringHook.Dispose();
-        _nodeController.Dispose();
+        // Relayout controller first (stops driving the block), then the provider (frees its nodes while the
+        // tooltip may still be alive), then KamiToolKit last.
+        _relayout.Dispose();
+        _gearSet.Dispose();
+        KamiToolKitLibrary.Dispose();
     }
 
     private void OnCommand(string command, string args)
@@ -113,7 +170,7 @@ public sealed class Plugin : IDalamudPlugin
 
             case "dumpnodes":
                 // Signature-free: walks the ItemDetail node tree to find leftover static label nodes.
-                _nodeController.RequestNodeDump();
+                _relayout.RequestNodeDump();
                 _log.Information("BetterTips: hover an item to dump its ItemDetail node tree to the log (/xllog).");
                 return;
 

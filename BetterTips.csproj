@@ -60,6 +60,18 @@
     </ItemGroup>
 
     <!--
+      KamiToolKit (git submodule, pinned). Used for the signature-free creation of the custom
+      "Gear Sets" row nodes. The Remove globs keep our default *.cs/Content globbing from pulling
+      KamiToolKit's own sources into this project (we reference it as a built project instead).
+    -->
+    <ItemGroup>
+        <Compile Remove="KamiToolKit\**"/>
+        <None Remove="KamiToolKit\**"/>
+        <Content Remove="KamiToolKit\**"/>
+        <ProjectReference Include="KamiToolKit\KamiToolKit.csproj"/>
+    </ItemGroup>
+
+    <!--
       DalamudPackager's NormalizePath() rewrites every zip entry name through
       Path.DirectorySeparatorChar before storing. On Windows that's '\\', which is invalid
       as a ZIP path separator — extractors see a flat filename instead of a directory tree.

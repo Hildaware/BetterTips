@@ -13,12 +13,6 @@ namespace BetterTips.UI;
 /// </summary>
 public sealed class ConfigWindow : Window
 {
-    private static readonly TooltipAnchor[] Anchors =
-        [TooltipAnchor.TopLeft, TooltipAnchor.TopRight, TooltipAnchor.BottomLeft, TooltipAnchor.BottomRight];
-
-    private static readonly string[] AnchorLabels =
-        ["Top-left", "Top-right", "Bottom-left", "Bottom-right"];
-
     private readonly Configuration.Configuration _config;
     private readonly Action _onChanged;
 
@@ -44,30 +38,6 @@ public sealed class ConfigWindow : Window
         }
 
         ImGui.Separator();
-
-        ImGui.TextDisabled("When shrinking, keep this corner fixed:");
-        var anchorIdx = Array.IndexOf(Anchors, _config.Anchor);
-        if (anchorIdx < 0) anchorIdx = 0;
-        ImGui.SetNextItemWidth(180f);
-        using (ImRaii.Disabled(!_config.Enabled))
-        {
-            if (ImGui.BeginCombo("##anchor", AnchorLabels[anchorIdx]))
-            {
-                for (var i = 0; i < Anchors.Length; i++)
-                    if (ImGui.Selectable(AnchorLabels[i], i == anchorIdx))
-                    {
-                        _config.Anchor = Anchors[i];
-                        changed = true;
-                    }
-
-                ImGui.EndCombo();
-            }
-        }
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip("Left/right only differ if the tooltip's width changes (it currently doesn't).");
-
-        ImGui.Separator();
         ImGui.TextDisabled("Tooltip sections to show (unchecked = hidden):");
         ImGui.Spacing();
 
@@ -87,6 +57,65 @@ public sealed class ConfigWindow : Window
 
                 if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(section.Description))
                     ImGui.SetTooltip(section.Description);
+            }
+        }
+
+        ImGui.Separator();
+        ImGui.TextDisabled("Extra info to add:");
+        ImGui.Spacing();
+
+        using (ImRaii.Disabled(!_config.Enabled))
+        {
+            var showGearSets = _config.ShowGearSets;
+            if (ImGui.Checkbox("Gear Sets##add_gearsets", ref showGearSets))
+            {
+                _config.ShowGearSets = showGearSets;
+                changed = true;
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Append a row of job icons for each of your gear sets that contains this item.");
+        }
+
+        ImGui.Separator();
+        ImGui.TextDisabled("Section order (preview — a drag editor is coming; use the arrows for now):");
+        ImGui.Spacing();
+
+        using (ImRaii.Disabled(!_config.Enabled))
+        {
+            var order = _config.SectionOrder;
+
+            // Every section is reorderable, including the added "Gear Sets" block. Defer the swap so we
+            // never mutate the list mid-render.
+            var swapA = -1;
+            var swapB = -1;
+            for (var i = 0; i < order.Count; i++)
+            {
+                ImGui.PushID(i);
+
+                if (ImGui.ArrowButton("##up", ImGuiDir.Up) && i > 0)
+                {
+                    swapA = i;
+                    swapB = i - 1;
+                }
+
+                ImGui.SameLine();
+                if (ImGui.ArrowButton("##down", ImGuiDir.Down) && i < order.Count - 1)
+                {
+                    swapA = i;
+                    swapB = i + 1;
+                }
+
+                ImGui.SameLine();
+                ImGui.Text(TooltipLayout.Find(order[i])?.Label ?? order[i].ToString());
+
+                ImGui.PopID();
+            }
+
+            if (swapA >= 0)
+            {
+                (order[swapA], order[swapB]) = (order[swapB], order[swapA]);
+                changed = true;
             }
         }
 

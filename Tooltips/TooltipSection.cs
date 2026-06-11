@@ -15,5 +15,9 @@ public enum TooltipSection
     MateriaMelding,
     VendorMarket,
     Description,
-    ControlHints
+    ControlHints,
+
+    // Appended last on purpose: HiddenSections is serialized by enum value, so new members must go at the
+    // end or existing saved configs would shift to the wrong sections.
+    AdvancedMelding
 }

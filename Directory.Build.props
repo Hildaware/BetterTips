@@ -1,0 +1,11 @@
+<Project>
+  <!--
+    Inherited by BetterTips.csproj *and* the KamiToolKit submodule project. The KamiToolKit
+    project doesn't set DalamudLocal the way BetterTips.csproj does, so it can only find the
+    Dalamud reference assemblies through DALAMUD_HOME. Point that at the sibling ../dalamud/
+    refs (same ones BetterTips resolves) unless the environment already provides DALAMUD_HOME.
+  -->
+  <PropertyGroup>
+    <DALAMUD_HOME Condition="'$(DALAMUD_HOME)' == ''">$(MSBuildThisFileDirectory)../dalamud/</DALAMUD_HOME>
+  </PropertyGroup>
+</Project>

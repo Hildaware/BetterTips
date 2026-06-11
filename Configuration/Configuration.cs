@@ -19,13 +19,26 @@ public sealed class Configuration : IPluginConfiguration
     public HashSet<TooltipSection> HiddenSections { get; set; } =
     [
         TooltipSection.ExtractProjectDesynth,
-        TooltipSection.DurabilitySpiritbondRepair
+        TooltipSection.DurabilitySpiritbondRepair,
+        TooltipSection.AdvancedMelding
     ];
 
-    /// <summary>Which corner stays fixed when a tooltip is shrunk. Default keeps the bottom-left put.</summary>
-    public TooltipAnchor Anchor { get; set; } = TooltipAnchor.BottomLeft;
+    /// <summary>
+    ///     User-defined top-to-bottom order of the reorderable content sections (see
+    ///     <see cref="TooltipLayout" />). Defaults to the natural order; while it equals the default the
+    ///     relayout engine leaves the game's order untouched. (A missing value in an old config keeps this
+    ///     initializer, so no migration is needed.)
+    /// </summary>
+    public List<LayoutSection> SectionOrder { get; set; } = new(TooltipLayout.DefaultOrder);
 
-    public int Version { get; set; } = 1;
+    /// <summary>
+    ///     Append a "Gear Sets" row at the bottom of the tooltip showing one job icon per distinct job
+    ///     whose gear set contains the item. Unlike the hide options this <em>adds</em> content; it still
+    ///     honors <see cref="Enabled" /> (off when the plugin is fully disabled).
+    /// </summary>
+    public bool ShowGearSets { get; set; } = true;
+
+    public int Version { get; set; } = 2;
 
     public void Save(IDalamudPluginInterface pi)
     {

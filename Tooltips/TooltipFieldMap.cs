@@ -22,6 +22,12 @@ public enum ItemDetailGroup
 ///         <item><see cref="StringIndices" /> — string-array fields blanked by the signature hook.</item>
 ///     </list>
 /// </summary>
+/// <param name="TextConditionalBlocks">
+///     Blocks hidden + reflowed only when their visible text currently contains the given phrase. Lets a
+///     section target a shared block by content (e.g. hide the description block only when it reads
+///     "Advanced Melding Forbidden", leaving real lore text alone). Matched case-insensitively, English
+///     phrasing (like the rest of the version-specific field map).
+/// </param>
 public sealed record TooltipSectionInfo(
     TooltipSection Section,
     string Label,
@@ -29,7 +35,8 @@ public sealed record TooltipSectionInfo(
     ItemDetailGroup[] Groups,
     uint[] Blocks,
     uint[] NodeIds,
-    int[] StringIndices);
+    int[] StringIndices,
+    (uint Block, string Text)[]? TextConditionalBlocks = null);
 
 /// <summary>
 ///     Maps each user-facing <see cref="TooltipSection" /> to its hide targets. String indices are seeded
@@ -68,12 +75,23 @@ public static class TooltipFieldMap
         new(TooltipSection.VendorMarket, "Vendor / market price",
             "\"Sells for ... gil\" / market status and the shop selling price line.",
             [], [43, 47], [], [25, 63]),
+        // Block #40 / string 13 is the item *description* field — flavor/lore text, or the notice the game
+        // writes there for gear that can't be overmelded ("Advanced Melding Forbidden"). This hides the
+        // whole field; to hide only the melding notice use AdvancedMelding below.
         new(TooltipSection.Description, "Flavor / description",
-            "The lore/description paragraph block.",
+            "The whole item description field (lore/flavor text — or \"Advanced Melding Forbidden\" on gear " +
+            "that can't be overmelded). To hide just that notice instead, use \"Advanced Melding Forbidden\".",
             [], [40], [], [13]),
         new(TooltipSection.ControlHints, "Control hints",
             "The keybind row at the bottom (Equip / Discard / etc.).",
-            [], [2], [], [64])
+            [], [2], [], [64]),
+        // Hides only the "Advanced Melding Forbidden" line: the description block (#40) is dropped just for
+        // items whose description field currently reads that phrase, so real lore text is left alone.
+        new(TooltipSection.AdvancedMelding, "Advanced Melding Forbidden",
+            "Hides only the \"Advanced Melding Forbidden\" notice (on gear that can't be overmelded), without " +
+            "touching real description/lore text on items that have it.",
+            [], [], [], [],
+            [(40u, "Advanced Melding Forbidden")])
     ];
 
     /// <summary>String-array indices to blank for the hidden sections (signature-hook path).</summary>
@@ -91,6 +109,15 @@ public static class TooltipFieldMap
     /// <summary>Sub-element node ids to hide (no reflow) for the hidden sections.</summary>
     public static uint[] NodeIdsFor(IReadOnlyCollection<TooltipSection> hidden)
         => Collect(hidden, s => s.NodeIds);
+
+    /// <summary>Content-conditional blocks (block id + phrase) to hide+reflow for the hidden sections.</summary>
+    public static (uint Block, string Text)[] TextConditionalBlocksFor(IReadOnlyCollection<TooltipSection> hidden)
+    {
+        if (hidden.Count == 0) return [];
+        return Sections.Where(s => hidden.Contains(s.Section))
+            .SelectMany(s => s.TextConditionalBlocks ?? [])
+            .ToArray();
+    }
 
     private static T[] Collect<T>(IReadOnlyCollection<TooltipSection> hidden, Func<TooltipSectionInfo, T[]> selector)
     {
