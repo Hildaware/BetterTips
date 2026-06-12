@@ -33,6 +33,7 @@ public sealed unsafe class TooltipContentBlock : ResNode
     private const float DividerY = 18f;      // divider top (game value: header at y=4, divider at y=18)
     private const float DividerHeight = 4f;
     private const float BodyY = 26f;         // body content top (just below the divider)
+    private const float HeaderlessBodyY = 6f; // body top when the block has no header/divider
 
     // The game's tooltip section headers: Axis font, size 12, light grey #C6C6C6 with a black outline.
     private const uint HeaderFontSize = 12;
@@ -41,6 +42,7 @@ public sealed unsafe class TooltipContentBlock : ResNode
 
     private readonly TextNode _header;
     private readonly HorizontalLineNode _divider;
+    private bool _headerless;
 
     public TooltipContentBlock()
     {
@@ -65,7 +67,7 @@ public sealed unsafe class TooltipContentBlock : ResNode
     }
 
     /// <summary>The body content's top Y, relative to this block. Position body children at/below it.</summary>
-    public float BodyTop => BodyY;
+    public float BodyTop => _headerless ? HeaderlessBodyY : BodyY;
 
     /// <summary>Sets the header label text.</summary>
     public string HeaderText
@@ -74,14 +76,26 @@ public sealed unsafe class TooltipContentBlock : ResNode
     }
 
     /// <summary>
+    ///     Hide the header label and divider so the block is just its body — matches the game's headerless
+    ///     sections (e.g. the damage/defense, item-level, and price lines, which have no section title).
+    /// </summary>
+    public void SetHeaderless()
+    {
+        _headerless = true;
+        _header.IsVisible = false;
+        _divider.IsVisible = false;
+    }
+
+    /// <summary>
     ///     Size the block to <paramref name="width" /> with a body of <paramref name="bodyHeight" />,
     ///     stretching the divider to span the width. Returns the block's total height.
     /// </summary>
     public float Resize(float width, float bodyHeight)
     {
-        _divider.Width = width - DividerInsetX - DividerRightInset;
+        if (!_headerless)
+            _divider.Width = width - DividerInsetX - DividerRightInset;
 
-        var total = BodyY + bodyHeight;
+        var total = BodyTop + bodyHeight;
         Size = new Vector2(width, total);
         return total;
     }

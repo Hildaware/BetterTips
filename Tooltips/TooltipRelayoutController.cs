@@ -114,9 +114,20 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     public void Rebuild()
     {
         _hiddenGroups = TooltipFieldMap.GroupsFor(_config.HiddenSections);
-        _hiddenBlocks = TooltipFieldMap.BlocksFor(_config.HiddenSections);
         _hiddenNodeIds = TooltipFieldMap.NodeIdsFor(_config.HiddenSections);
         _conditionalBlocks = TooltipFieldMap.TextConditionalBlocksFor(_config.HiddenSections);
+
+        // Hidden blocks come from two sources: the finer TooltipSection detail hides (still in HiddenSections)
+        // and the whole movable blocks the user removed in the visual editor (HiddenLayoutSections). Both are
+        // top-level block ids hidden the same way — once hidden, the order walk skips them (Visible==0) and
+        // ApplyPlan keeps them hidden per-frame. Gear Sets has no native block, so it's gated by ShowGearSets,
+        // not here.
+        var hiddenBlocks = new List<uint>(TooltipFieldMap.BlocksFor(_config.HiddenSections));
+        if (_config.HiddenLayoutSections is not null)
+            foreach (var section in _config.HiddenLayoutSections)
+                if (TooltipLayout.Find(section) is { } info)
+                    hiddenBlocks.AddRange(info.BlockIds);
+        _hiddenBlocks = hiddenBlocks.Distinct().ToArray();
 
         // Take the saved order, de-duplicated (a doubled entry would stack the same block twice), then
         // append any sections it's missing (partial/old config, or a newly added section).
@@ -635,10 +646,13 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     }
 
     /// <summary>Dev aid (<c>/btips dumpnodes</c>): logs the ItemDetail node list (id / parent / type /
-    /// visibility / Y / Height / text style) so block ids, heights, and header styling can be read off.</summary>
+    /// visibility / pos / size, plus text style for Text nodes and texture/nine-grid info for Image and
+    /// NineGrid nodes) so block ids, heights, header styling, and the tooltip's <b>background/chrome</b> can
+    /// be read off. Recurses one level into component nodes, where window/background nine-grids live.</summary>
     private void DumpNodeTree(AddonItemDetail* addon)
     {
-        _log.Information("BetterTips: ItemDetail nodes (#id <#parent | type vis y=Y h=Height \"text\"):");
+        _log.Information("BetterTips: ItemDetail nodes (#id <#parent type vis pos size; text: fs/align/col/edge;" +
+                         " image/ninegrid: parts/tex/offsets):");
 
         var list = addon->UldManager.NodeList;
         if (list is null) return;
@@ -648,11 +662,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         {
             var node = list[i];
             if (node is not null)
-                LogNode(node);
+                LogNode(node, 0);
         }
     }
 
-    private void LogNode(AtkResNode* node)
+    private void LogNode(AtkResNode* node, int depth)
     {
         var visible = (node->NodeFlags & NodeFlags.Visible) != 0;
         var parentId = node->ParentNode is not null ? node->ParentNode->NodeId : 0;
@@ -676,9 +690,54 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
             extra = $" fs={t->FontSize} align={t->AlignmentType} col=#{c.R:X2}{c.G:X2}{c.B:X2}{c.A:X2} edge=#{e.R:X2}{e.G:X2}{e.B:X2}{e.A:X2}{s}";
         }
+        else if (node->Type == NodeType.Image)
+        {
+            extra = DescribeParts(((AtkImageNode*)node)->PartsList);
+        }
+        else if (node->Type == NodeType.NineGrid)
+        {
+            var ng = (AtkNineGridNode*)node;
+            extra = DescribeParts(ng->PartsList) +
+                    $" ninegrid(t={ng->TopOffset:0} b={ng->BottomOffset:0} l={ng->LeftOffset:0} r={ng->RightOffset:0})";
+        }
 
+        var indent = depth > 0 ? new string(' ', depth * 2) + "> " : "";
         _log.Information(
-            $"#{node->NodeId} <#{parentId} {node->Type} vis={visible} x={node->X:0} y={node->Y:0} w={node->Width:0} h={node->Height:0}{extra}");
+            $"{indent}#{node->NodeId} <#{parentId} {node->Type} vis={visible} x={node->X:0} y={node->Y:0} w={node->Width:0} h={node->Height:0}{extra}");
+
+        // Recurse one level into component internals — the window/background nine-grid that gives the
+        // tooltip its chrome lives inside the frame component, not in the addon's flat node list.
+        if ((uint)node->Type >= 1000 && depth < 2)
+        {
+            var component = ((AtkComponentNode*)node)->Component;
+            if (component is not null)
+            {
+                var childList = component->UldManager.NodeList;
+                var childCount = component->UldManager.NodeListCount;
+                for (var i = 0; i < childCount && i < 80; i++)
+                    if (childList is not null && childList[i] is not null)
+                        LogNode(childList[i], depth + 1);
+            }
+        }
+    }
+
+    /// <summary>Describes an image/nine-grid node's first part: part count, texture file, and part rect —
+    /// enough to identify and reproduce the tooltip's background texture.</summary>
+    private static string DescribeParts(AtkUldPartsList* partsList)
+    {
+        if (partsList is null || partsList->PartCount == 0) return " parts=0";
+
+        var part = &partsList->Parts[0];
+        var tex = "?";
+        var asset = part->UldAsset;
+        if (asset is not null && asset->AtkTexture.Resource is not null &&
+            asset->AtkTexture.Resource->TexFileResourceHandle is not null)
+        {
+            try { tex = asset->AtkTexture.Resource->TexFileResourceHandle->FileName.ToString(); }
+            catch { tex = "?"; }
+        }
+
+        return $" parts={partsList->PartCount} tex=\"{tex}\" part0(u={part->U} v={part->V} w={part->Width} h={part->Height})";
     }
 
     public void Dispose()

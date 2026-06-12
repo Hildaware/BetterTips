@@ -54,11 +54,14 @@ public static class TooltipLayout
         new(LayoutSection.DamageDefense,     "Damage / Defense",            [36]),
         new(LayoutSection.ItemLevelClassJob, "Item Level, Class/Job & Lv.", [62]),
         new(LayoutSection.Description,        "Description",                 [40]),
-        new(LayoutSection.AttributeBonuses,  "Attribute Bonuses",           [97]),
+        new(LayoutSection.AttributeBonuses,  "Bonuses",                     [97]),
         new(LayoutSection.Materia,            "Materia",                     [93]),
         new(LayoutSection.Effects,            "Effects",                     [49]),
         new(LayoutSection.CraftingRepairs,    "Crafting & Repairs",          [68]),
-        new(LayoutSection.Requirements,       "Requirements",                [53]),
+        // Requirements (block #53) is intentionally omitted: equip requirements already live in the Item
+        // Level / Class block, and the native #53 "Requirements" block (Base Item / Catalyst) is a niche
+        // crafting-material line, not a real reorderable section for the user. The enum member stays for
+        // serialization safety.
         new(LayoutSection.VendorMarket,       "Vendor / Market",             [43, 47]),
         // No block ids — this is BetterTips' own gear-set block, built by GearSetBlockProvider and laid out
         // by TooltipRelayoutController at this order slot (not a native node addressed by id).

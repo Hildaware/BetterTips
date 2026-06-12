@@ -14,8 +14,26 @@ public sealed class Plugin : IDalamudPlugin
     private const string CommandName = "/bettertips";
     private const string CommandAlias = "/btips";
 
+    /// <summary>
+    ///     v2→v3 migration table: the old block-level <see cref="TooltipSection" /> hides and the
+    ///     <see cref="LayoutSection" /> block(s) each now corresponds to. Only these (whole-block) sections
+    ///     move into <see cref="Configuration.Configuration.HiddenLayoutSections" />; the finer detail hides
+    ///     (item category, extract flags, control hints, Advanced Melding) stay in <c>HiddenSections</c>.
+    /// </summary>
+    private static readonly (TooltipSection Section, LayoutSection[] Layouts)[] BlockHideMigration =
+    [
+        (TooltipSection.EquipRestriction, [LayoutSection.ItemLevelClassJob]),
+        (TooltipSection.Stats, [LayoutSection.DamageDefense, LayoutSection.AttributeBonuses]),
+        (TooltipSection.DurabilitySpiritbondRepair, [LayoutSection.CraftingRepairs]),
+        (TooltipSection.MateriaMelding, [LayoutSection.Materia]),
+        (TooltipSection.VendorMarket, [LayoutSection.VendorMarket]),
+        (TooltipSection.Description, [LayoutSection.Description])
+    ];
+
     private readonly ICommandManager _commandManager;
     private readonly ConfigWindow _configWindow;
+    private readonly TooltipControlWindow _controlWindow;
+    private readonly TooltipPreviewWindow _previewWindow;
     private readonly GearSetBlockProvider _gearSet;
     private readonly IPluginLog _log;
     private readonly TooltipRelayoutController _relayout;
@@ -29,6 +47,7 @@ public sealed class Plugin : IDalamudPlugin
         IGameInteropProvider interopProvider,
         IAddonLifecycle addonLifecycle,
         IGameGui gameGui,
+        IDataManager dataManager,
         IPluginLog log)
     {
         _pluginInterface = pluginInterface;
@@ -61,6 +80,31 @@ public sealed class Plugin : IDalamudPlugin
             catch (Exception ex)
             {
                 log.Error(ex, "BetterTips: failed to persist migrated config.");
+            }
+        }
+
+        // v3 introduces the visual editor's per-block removal (HiddenLayoutSections). Block-level hides used
+        // to live as TooltipSection entries; translate the user's old block hides into the new collection so
+        // the catalog is the single source of truth, then drop them from HiddenSections (which now holds only
+        // the finer detail hides). Rebuild HiddenLayoutSections from scratch rather than merging into its
+        // fresh-install default ([CraftingRepairs]) — a user who deliberately un-hid Crafting & Repairs must
+        // not be silently re-hidden by that default. Idempotent: fresh/corrupt configs start at v3, so this
+        // is skipped and the initializer defaults stand.
+        if (config.Version < 3)
+        {
+            config.HiddenLayoutSections = new HashSet<LayoutSection>();
+            foreach (var (section, layouts) in BlockHideMigration)
+                if (config.HiddenSections.Remove(section))
+                    foreach (var layout in layouts)
+                        config.HiddenLayoutSections.Add(layout);
+            config.Version = 3;
+            try
+            {
+                config.Save(pluginInterface);
+            }
+            catch (Exception ex)
+            {
+                log.Error(ex, "BetterTips: failed to persist v3 config migration.");
             }
         }
 
@@ -106,7 +150,9 @@ public sealed class Plugin : IDalamudPlugin
 
         // Persisting + rebuilding both paths is funneled through one guarded callback so a save failure
         // (e.g. disk error) can never escape into the UI draw loop.
-        _configWindow = new ConfigWindow(config, () =>
+        // Persisting + rebuilding the tooltip paths is funneled through one guarded callback, shared by both
+        // editor surfaces, so a save failure (e.g. disk error) can never escape into a draw/click loop.
+        void OnChanged()
         {
             try
             {
@@ -118,7 +164,28 @@ public sealed class Plugin : IDalamudPlugin
             {
                 _log.Error(ex, "BetterTips: failed to persist config.");
             }
-        });
+        }
+
+        // Primary surface: the native (KamiToolKit) visual editor, split into two windows — a standalone
+        // tooltip preview (rendered with the game's own node types, filled from a representative item) and a
+        // control window with the Enable switch + add/remove catalog that drives it. Nodes are created on Open.
+        var sample = SampleItemData.Build(dataManager, log);
+        _previewWindow = new TooltipPreviewWindow(config, sample, OnChanged, log)
+        {
+            InternalName = "BetterTipsPreview",
+            Title = "BetterTips — Preview",
+            Size = new Vector2(400f, 780f)
+        };
+        _controlWindow = new TooltipControlWindow(config, OnChanged, _previewWindow, log)
+        {
+            InternalName = "BetterTipsControls",
+            Title = "BetterTips",
+            Size = new Vector2(300f, 520f)
+        };
+
+        // Fallback surface (/btips classic): the ImGui settings window — insurance if the native window has
+        // trouble on a given patch. Drives the same config via the same callback.
+        _configWindow = new ConfigWindow(config, OnChanged);
         _windowSystem = new WindowSystem("BetterTips");
         _windowSystem.AddWindow(_configWindow);
 
@@ -128,7 +195,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open settings. \"/bettertips dump\" logs tooltip string fields; \"dumpnodes\" logs the node tree."
+            HelpMessage = "Open the visual editor. \"dump\"/\"dumpnodes\" log tooltip internals; \"classic\" opens the ImGui settings."
         });
         _commandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
         {
@@ -149,9 +216,12 @@ public sealed class Plugin : IDalamudPlugin
 
         _stringHook.Dispose();
         // Relayout controller first (stops driving the block), then the provider (frees its nodes while the
-        // tooltip may still be alive), then KamiToolKit last.
+        // tooltip may still be alive), then the native editor window, then KamiToolKit last — every owner of
+        // KTK nodes is torn down before the library that backs them.
         _relayout.Dispose();
         _gearSet.Dispose();
+        _controlWindow.Dispose();
+        _previewWindow.Dispose();
         KamiToolKitLibrary.Dispose();
     }
 
@@ -174,14 +244,19 @@ public sealed class Plugin : IDalamudPlugin
                 _log.Information("BetterTips: hover an item to dump its ItemDetail node tree to the log (/xllog).");
                 return;
 
-            default:
+            case "classic":
+                // The ImGui fallback settings window.
                 _configWindow.Toggle();
+                return;
+
+            default:
+                _controlWindow.Toggle();
                 return;
         }
     }
 
     private void OpenConfigUi()
     {
-        _configWindow.Toggle();
+        _controlWindow.Toggle();
     }
 }
