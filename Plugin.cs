@@ -35,11 +35,13 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TooltipControlWindow _controlWindow;
     private readonly TooltipPreviewWindow _previewWindow;
     private readonly GearSetBlockProvider _gearSet;
+    private readonly UnifiedHeaderBlockProvider _unifiedHeader;
     private readonly IPluginLog _log;
     private readonly TooltipRelayoutController _relayout;
     private readonly IDalamudPluginInterface _pluginInterface;
     private readonly ItemTooltipModifier _stringHook;
     private readonly WindowSystem _windowSystem;
+    private readonly IClientState _clientState;
 
     public Plugin(
         IDalamudPluginInterface pluginInterface,
@@ -48,10 +50,12 @@ public sealed class Plugin : IDalamudPlugin
         IAddonLifecycle addonLifecycle,
         IGameGui gameGui,
         IDataManager dataManager,
+        IClientState clientState,
         IPluginLog log)
     {
         _pluginInterface = pluginInterface;
         _commandManager = commandManager;
+        _clientState = clientState;
         _log = log;
 
         Configuration.Configuration config;
@@ -138,12 +142,14 @@ public sealed class Plugin : IDalamudPlugin
         // KamiToolKit backs the "Gear Sets" block's native nodes. Initialize it before any node is created.
         KamiToolKitLibrary.Initialize(pluginInterface, "BetterTips");
 
-        // The gear-set block provider is driven by the relayout controller (so it lays out as part of the
-        // single pass), so it must exist first. It reads its lookup from a shared, throttled GearSetIndex.
+        // The block providers are driven by the relayout controller (so they lay out as part of the single
+        // pass), so they must exist first. The gear-set block reads its lookup from a shared GearSetIndex; the
+        // unified-header block reads the hovered item's static data from Lumina.
         _gearSet = new GearSetBlockProvider(addonLifecycle, gameGui, config, new GearSetIndex(), log);
+        _unifiedHeader = new UnifiedHeaderBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
 
-        // Primary path: the signature-free single-pass relayout (hide + reorder + gear-set) via IAddonLifecycle.
-        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet);
+        // Primary path: the signature-free single-pass relayout (hide + reorder + gear-set + unified header).
+        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet, _unifiedHeader);
         // Fallback/enhancement: a signature hook that blanks text-only lines for the cleanest collapse.
         // Only active if the signature resolves; otherwise it self-disables to a harmless no-op.
         _stringHook = new ItemTooltipModifier(interopProvider, config, log);
@@ -180,7 +186,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             InternalName = "BetterTipsControls",
             Title = "BetterTips",
-            Size = new Vector2(300f, 520f)
+            Size = new Vector2(300f, 580f)
         };
 
         // Fallback surface (/btips classic): the ImGui settings window — insurance if the native window has
@@ -202,12 +208,33 @@ public sealed class Plugin : IDalamudPlugin
             HelpMessage = "Alias for /bettertips."
         });
 
+        // Close the native editor windows on logout so KamiToolKit can finalize them while the game is still
+        // alive. Left open, a window's deferred finalize runs through a torn-down hook during the game's exit
+        // teardown and crashes in native code (see the native-window-exit-crash notes).
+        _clientState.Logout += OnLogout;
+
         log.Information($"BetterTips loaded. Node path: active. String path: " +
                         $"{(_stringHook.IsActive ? "active" : "unavailable (signature not found)")}.");
     }
 
+    /// <summary>Close the native editor windows when the player logs out (incl. the Exit Game path), so their
+    /// KamiToolKit addons finalize while the game is alive rather than during the crash-prone exit teardown.</summary>
+    private void OnLogout(int type, int code)
+    {
+        try
+        {
+            _controlWindow.Close();
+            _previewWindow.Close();
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, "BetterTips: error closing editor windows on logout.");
+        }
+    }
+
     public void Dispose()
     {
+        _clientState.Logout -= OnLogout;
         _commandManager.RemoveHandler(CommandName);
         _commandManager.RemoveHandler(CommandAlias);
         _pluginInterface.UiBuilder.OpenMainUi -= OpenConfigUi;
@@ -220,6 +247,7 @@ public sealed class Plugin : IDalamudPlugin
         // KTK nodes is torn down before the library that backs them.
         _relayout.Dispose();
         _gearSet.Dispose();
+        _unifiedHeader.Dispose();
         _controlWindow.Dispose();
         _previewWindow.Dispose();
         KamiToolKitLibrary.Dispose();

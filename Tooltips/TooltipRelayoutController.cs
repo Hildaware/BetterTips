@@ -53,6 +53,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // Owns/draws BetterTips' added "Gear Sets" block. Driven as just another section in this layout pass.
     private readonly GearSetBlockProvider _gearSet;
 
+    // Owns/draws the "Unified item header" block (the UnifiedItemHeader enhancement). When active it replaces
+    // the native header name/icon + the Item Level (#62) and Damage/Defense (#36) blocks, and the content is
+    // re-anchored below it instead of below the header.
+    private readonly UnifiedHeaderBlockProvider _unified;
+
     // Recomputed on config change; each replaced as a whole reference (atomic) so a callback never sees a
     // half-mutated collection.
     private ItemDetailGroup[] _hiddenGroups = [];
@@ -73,6 +78,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     private float _planControlY = float.NaN;          // NaN → control not placed (hidden/absent)
     private bool _planShowGear;
     private float _planGearY;
+    private bool _planShowUnified;
+    private float _planUnifiedY;
+    private bool _planShowGauge;
+    private float _planGaugeX;
+    private float _planGaugeY;
     private readonly List<ItemDetailGroup> _planGroups = [];   // named groups to keep hidden
     private readonly List<uint> _planHideIds = [];             // block/sub-node ids to keep hidden (incl. conditional)
     private readonly List<(uint Id, float Y)> _planBlocks = []; // native content blocks → absolute target Y
@@ -99,13 +109,15 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     private int _watchFrame;
 
     public TooltipRelayoutController(IAddonLifecycle addonLifecycle, IGameGui gameGui,
-        Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet)
+        Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet,
+        UnifiedHeaderBlockProvider unified)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
         _config = config;
         _log = log;
         _gearSet = gearSet;
+        _unified = unified;
         Rebuild();
 
         // Compute the plan when the game updates the tooltip's content...
@@ -126,7 +138,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         // and the whole movable blocks the user removed in the visual editor (HiddenLayoutSections). Both are
         // top-level block ids hidden the same way — once hidden, the order walk skips them (Visible==0) and
         // ApplyPlan keeps them hidden per-frame. Gear Sets has no native block, so it's gated by ShowGearSets,
-        // not here.
+        // not here. The Unified item header's hides (#36/#62 + the header sub-nodes) are NOT here — they're
+        // applied per-item in Recompute, only when the block actually shows for the hovered item.
         var hiddenBlocks = new List<uint>(TooltipFieldMap.BlocksFor(_config.HiddenSections));
         if (_config.HiddenLayoutSections is not null)
             foreach (var section in _config.HiddenLayoutSections)
@@ -216,6 +229,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         {
             Discard();
             _gearSet.Hide();
+            _unified.Hide();
             return;
         }
 
@@ -224,6 +238,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         {
             Discard();
             _gearSet.Hide();
+            _unified.Hide();
             return;
         }
 
@@ -257,16 +272,19 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planHideIds.Clear();
         _planBlocks.Clear();
         _planShowGear = false;
+        _planShowUnified = false;
+        _planShowGauge = false;
         _planControlY = float.NaN;
 
-        // Build + measure the gear-set block first; it leaves the block HIDDEN, so the scans below ignore it.
+        // Build + measure our added blocks first; they leave themselves HIDDEN, so the scans below ignore them.
         var gearWants = _gearSet.TryMeasure(addon, root->Width, out var gearHeight);
+        var unifiedWants = _unified.TryMeasure(addon, root->Width, out var unifiedHeight);
 
         var hasHides = _hiddenGroups.Length > 0 || _hiddenBlocks.Length > 0 ||
                        _hiddenNodeIds.Length > 0 || _conditionalBlocks.Length > 0;
 
         // Do no harm when idle: nothing configured to change → leave the game's layout pristine (no plan).
-        if (!hasHides && !_reorderActive && !gearWants)
+        if (!hasHides && !_reorderActive && !gearWants && !unifiedWants)
         {
             _prevIncluded.Clear();
             return;
@@ -274,9 +292,46 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
         var frame = FindFrame(addon, rootId);
 
-        var anchorTop = ComputeAnchorTop(addon, rootId, frame);
-        if (anchorTop < 0f)
-            return; // can't resolve a stable anchor (UI patch shifted ids) → bail, no plan
+        // The anchor: normally the bottom of the fixed header. When the Unified item header is active it
+        // replaces the header, so the rest of the content anchors below OUR block instead — placed just under
+        // the preserved binding/untradable line.
+        float anchorTop;
+        if (unifiedWants)
+        {
+            var header = addon->GetNodeById(TooltipLayout.HeaderBlockId);
+            var headerY = header is not null ? (float)header->Y : 0f;
+            var binding = addon->GetNodeById(TooltipLayout.BindingLineBlockId);
+            var blockTop = binding is not null && (binding->NodeFlags & NodeFlags.Visible) != 0
+                ? binding->Y + binding->Height + 4f
+                : 6f;
+
+            _unified.PlaceAt(blockTop);
+            _unified.Show();
+            _planShowUnified = true;
+            _planUnifiedY = blockTop;
+            anchorTop = headerY + blockTop + unifiedHeight;
+
+            // The durability/spiritbond gauge (#7) otherwise floats at the old header top — move it directly
+            // left of our icon (align its bars' top, at the gauge's internal y=13, with the icon's top).
+            const float gaugeX = 10f; // nudge the bars right so they sit just left of the icon, off the edge
+            var gaugeY = blockTop + UnifiedHeaderNodes.IconOffsetY - 13f;
+            var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
+            if (gauge is not null && (gauge->NodeFlags & NodeFlags.Visible) != 0)
+            {
+                gauge->SetXFloat(gaugeX);
+                gauge->SetYFloat(gaugeY);
+                _planShowGauge = true;
+                _planGaugeX = gaugeX;
+                _planGaugeY = gaugeY;
+            }
+        }
+        else
+        {
+            _unified.Hide();
+            anchorTop = ComputeAnchorTop(addon, rootId, frame);
+            if (anchorTop < 0f)
+                return; // can't resolve a stable anchor (UI patch shifted ids) → bail, no plan
+        }
 
         // --- Hides (apply now, and record so the per-frame pass can keep them hidden). ---
         foreach (var group in _hiddenGroups)
@@ -306,6 +361,28 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             var node = addon->GetNodeById(block);
             if (node is not null) node->ToggleVisibility(false);
             _planHideIds.Add(block);
+        }
+
+        // The Unified item header: hide the native header name/icon/category/quantity (#32/#33/#34/#35/#24)
+        // and the now-folded Damage/Defense (#36) + Item Level (#62) blocks — only when our block is actually
+        // showing (so a non-equippable hover never loses its native header). The binding line (#20) is left.
+        if (unifiedWants)
+        {
+            foreach (var id in TooltipLayout.UnifiedHeaderHiddenNodeIds)
+            {
+                var node = addon->GetNodeById(id);
+                if (node is not null) node->ToggleVisibility(false);
+                _planHideIds.Add(id);
+            }
+
+            foreach (var section in (ReadOnlySpan<LayoutSection>)[LayoutSection.DamageDefense, LayoutSection.ItemLevelClassJob])
+                if (TooltipLayout.Find(section) is { } info)
+                    foreach (var id in info.BlockIds)
+                    {
+                        var node = addon->GetNodeById(id);
+                        if (node is not null) node->ToggleVisibility(false);
+                        _planHideIds.Add(id);
+                    }
         }
 
         // --- Lay out the ordered, effective-visible content absolutely from the header anchor. ---
@@ -382,6 +459,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planHideIds.Clear();
         _planBlocks.Clear();
         _planShowGear = false;
+        _planShowUnified = false;
+        _planShowGauge = false;
         _planControlY = float.NaN;
         _prevIncluded.Clear();
     }
@@ -448,6 +527,28 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         else
         {
             _gearSet.Hide();
+        }
+
+        // Unified item header block.
+        if (_planShowUnified)
+        {
+            _unified.PlaceAt(_planUnifiedY);
+            _unified.Show();
+        }
+        else
+        {
+            _unified.Hide();
+        }
+
+        // Durability/spiritbond gauge re-position (only while the unified header owns the top).
+        if (_planShowGauge)
+        {
+            var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
+            if (gauge is not null)
+            {
+                if (Math.Abs(gauge->X - _planGaugeX) > 0.5f) gauge->SetXFloat(_planGaugeX);
+                if (Math.Abs(gauge->Y - _planGaugeY) > 0.5f) gauge->SetYFloat(_planGaugeY);
+            }
         }
 
         // Control-hints row.

@@ -31,12 +31,15 @@ public sealed class SampleItemData
     private readonly Dictionary<LayoutSection, Row[]> _body;
 
     private SampleItemData(string name, string category, uint itemLevel, ushort icon,
-        Dictionary<LayoutSection, Row[]> body)
+        Row primaryStat, uint requiredLevel, byte rarity, Dictionary<LayoutSection, Row[]> body)
     {
         Name = name;
         Category = category;
         ItemLevel = itemLevel;
         Icon = icon;
+        PrimaryStat = primaryStat;
+        RequiredLevel = requiredLevel;
+        Rarity = rarity;
         _body = body;
     }
 
@@ -46,6 +49,9 @@ public sealed class SampleItemData
         Category = "Arm Armor";
         ItemLevel = 0;
         Icon = 0;
+        PrimaryStat = new Row("Physical Attack", "0");
+        RequiredLevel = 0;
+        Rarity = 2;
         _body = new Dictionary<LayoutSection, Row[]>();
     }
 
@@ -60,6 +66,19 @@ public sealed class SampleItemData
 
     /// <summary>The item level (for the header), or 0 if unknown.</summary>
     public uint ItemLevel { get; }
+
+    /// <summary>
+    ///     The primary stat shown large in the unified header — a <c>(descriptor, value)</c> pair. Physical
+    ///     Attack / Magic Damage for weapons (whichever damage is higher), or the higher of Defense / Magic
+    ///     Defense for armor.
+    /// </summary>
+    public Row PrimaryStat { get; }
+
+    /// <summary>The required equip level (<c>LevelEquip</c>), shown as "REQ LV n" in the unified header.</summary>
+    public uint RequiredLevel { get; }
+
+    /// <summary>The item rarity (1 normal … 7 aetherial) — drives the unified header's name color.</summary>
+    public byte Rarity { get; }
 
     /// <summary>The reconstructed body rows for a section (empty → the card shows just its header).</summary>
     public Row[] BodyRows(LayoutSection section)
@@ -169,11 +188,26 @@ public sealed class SampleItemData
         // The real Gear Sets row renders job icons; in the mock it's a representative note.
         body[LayoutSection.GearSets] = [new Row("", "(job icons for gear sets with this item)")];
 
+        // The unified header's big primary stat: weapons show the higher of Physical/Magic damage with its
+        // descriptor; armor shows the higher of Physical/Magic defense.
+        Row primaryStat;
+        if (item.DamagePhys > 0 || item.DamageMag > 0)
+            primaryStat = item.DamageMag > item.DamagePhys
+                ? new Row("Magic Damage", item.DamageMag.ToString())
+                : new Row("Physical Attack", item.DamagePhys.ToString());
+        else
+            primaryStat = item.DefenseMag > item.DefensePhys
+                ? new Row("Magic Defense", item.DefenseMag.ToString())
+                : new Row("Defense", item.DefensePhys.ToString());
+
         return new SampleItemData(
             item.Name.ToString(),
             item.ItemUICategory.Value.Name.ToString(),
             item.LevelItem.RowId,
             item.Icon,
+            primaryStat,
+            item.LevelEquip,
+            item.Rarity,
             body);
     }
 

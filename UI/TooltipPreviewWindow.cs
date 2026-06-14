@@ -1,11 +1,11 @@
 using BetterTips.Tooltips;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using KamiToolKit;
+using KamiToolKit.BaseTypes;
 using KamiToolKit.Classes;
 using KamiToolKit.Enums;
 using KamiToolKit.Nodes;
-using KamiToolKit.Premade.Node.Simple;
+using KamiToolKit.Nodes.Simplified;
 
 namespace BetterTips.UI;
 
@@ -68,6 +68,9 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     private const float IconSize = 40f;
     private const float HeaderTextInset = PanelPad + IconSize + 8f; // name/category sit right of the icon
 
+    // The unified item header's geometry/palette lives in UnifiedHeaderNodes (shared with the live block), so
+    // the preview and the real tooltip render identically — see BuildUnifiedHeader.
+
     private const uint NameFontSize = 14;
     private const uint BodyFontSize = 12;
 
@@ -92,6 +95,8 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     private TextNode? _nameNode;
     private TextNode? _categoryNode;
     private TextNode? _controlHints;
+    private ResNode? _unifiedHeader;
+    private UnifiedHeaderNodes? _unifiedNodes;
     private readonly Dictionary<LayoutSection, TooltipContentBlock> _cards = new();
 
     // The current absolute slot Y of each visible card. A card whose live Y has drifted from its slot is the
@@ -133,6 +138,9 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         _nameNode = null;
         _categoryNode = null;
         _controlHints = null;
+        _unifiedNodes?.Reset();
+        _unifiedNodes = null;
+        _unifiedHeader = null;
     }
 
     protected override void OnDraw(AtkUnitBase* addon)
@@ -219,6 +227,9 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
             card.AttachNode(_previewRoot);
             _cards[section] = card;
         }
+
+        // The unified item-header block (built hidden; shown only when the enhancement is enabled).
+        BuildUnifiedHeader(cardWidth);
 
         _controlHints = new TextNode
         {
@@ -409,6 +420,32 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         return BuildRows(card, LayoutSection.CraftingRepairs);
     }
 
+    /// <summary>
+    ///     The "Unified item header" enhancement's block — the icon + name + category + primary stat + item
+    ///     level + required level + equippable-job icons merged into one section (the native header, Item
+    ///     Level, and Damage/Defense, combined). Rendered by the shared <see cref="UnifiedHeaderNodes" /> so
+    ///     it's identical to the live tooltip; built once from the sample and hidden until the enhancement is
+    ///     on (<see cref="RefreshPreview" /> shows/positions it).
+    /// </summary>
+    private void BuildUnifiedHeader(float width)
+    {
+        _unifiedHeader = new ResNode { IsVisible = false, Size = new Vector2(width, 0f) };
+        _unifiedHeader.AttachNode(_previewRoot);
+
+        _unifiedNodes = new UnifiedHeaderNodes();
+        _unifiedNodes.Build(_unifiedHeader, mockDurabilityBars: true);
+
+        // The sample shows job icons with the first one (PLD) marked as the "current job" to demo the outline.
+        var jobIcons = SampleJobs.Select(j => JobIconBase + (uint)j).ToList();
+        var data = new UnifiedHeaderData(_sample.Name, _sample.Icon, _sample.Category,
+            _sample.PrimaryStat.Value, _sample.PrimaryStat.Label, _sample.ItemLevel, _sample.RequiredLevel,
+            jobIcons, "Disciples of War or Magic", _sample.Rarity,
+            JobIconBase + (uint)SampleJobs[0], CurrentJobEquippable: true);
+
+        var height = _unifiedNodes.Update(data, width);
+        _unifiedHeader.Size = new Vector2(width, height);
+    }
+
     private static void AddBodyText(NodeBase parent, string text, Vector4 color, float x, float y,
         uint fontSize = BodyFontSize)
     {
@@ -472,34 +509,54 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     {
         if (_previewRoot is null) return;
 
-        // Header: icon top-left; the name is vertically centered against the icon to its right; the category
-        // ("Gladiator's Arm") sits below the icon, left-aligned with it (no item level here).
-        var hasIcon = _iconNode is not null;
-        if (_nameNode is not null)
-        {
-            var nameX = hasIcon ? HeaderTextInset : PanelPad;
-            var nameY = hasIcon ? HeaderTopPad + (IconSize - (float)NameFontSize - 4f) / 2f : HeaderTopPad;
-            _nameNode.Position = new Vector2(nameX, nameY);
-            _nameNode.IsVisible = true;
-        }
+        var unified = EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedItemHeader);
 
-        var iconBottom = HeaderTopPad + (hasIcon ? IconSize : NameHeight);
-        var showCategory = !_config.HiddenSections.Contains(TooltipSection.ItemCategory);
-        if (_categoryNode is not null)
+        // Header region: either the native icon/name/category, or the merged unified-header block at the top
+        // (which folds in the icon/name, Item Level, and Damage/Defense — those cards are skipped below).
+        float top;
+        if (unified && _unifiedHeader is not null)
         {
-            _categoryNode.IsVisible = showCategory;
-            if (showCategory)
-                _categoryNode.Position = new Vector2(PanelPad, iconBottom + 2f);
-        }
+            if (_iconNode is not null) _iconNode.IsVisible = false;
+            if (_nameNode is not null) _nameNode.IsVisible = false;
+            if (_categoryNode is not null) _categoryNode.IsVisible = false;
 
-        var top = (showCategory ? iconBottom + 2f + CategoryHeight : iconBottom) + HeaderGap;
+            _unifiedHeader.IsVisible = true;
+            _unifiedHeader.Position = new Vector2(PanelPad, HeaderTopPad);
+            top = HeaderTopPad + _unifiedHeader.Height + HeaderGap;
+        }
+        else
+        {
+            if (_unifiedHeader is not null) _unifiedHeader.IsVisible = false;
+
+            // Header: icon top-left; the name is vertically centered against the icon to its right; the
+            // category ("Gladiator's Arm") sits below the icon, left-aligned with it (no item level here).
+            var hasIcon = _iconNode is not null;
+            if (_nameNode is not null)
+            {
+                var nameX = hasIcon ? HeaderTextInset : PanelPad;
+                var nameY = hasIcon ? HeaderTopPad + (IconSize - (float)NameFontSize - 4f) / 2f : HeaderTopPad;
+                _nameNode.Position = new Vector2(nameX, nameY);
+                _nameNode.IsVisible = true;
+            }
+
+            var iconBottom = HeaderTopPad + (hasIcon ? IconSize : NameHeight);
+            var showCategory = !_config.HiddenSections.Contains(TooltipSection.ItemCategory);
+            if (_categoryNode is not null)
+            {
+                _categoryNode.IsVisible = showCategory;
+                if (showCategory)
+                    _categoryNode.Position = new Vector2(PanelPad, iconBottom + 2f);
+            }
+
+            top = (showCategory ? iconBottom + 2f + CategoryHeight : iconBottom) + HeaderGap;
+        }
 
         var y = top;
         foreach (var section in _config.SectionOrder)
         {
             if (!_cards.TryGetValue(section, out var card)) continue;
 
-            if (SectionVisibility.IsShown(_config, section))
+            if (IsPreviewVisible(section))
             {
                 card.IsVisible = true;
                 _slotY[section] = y;
@@ -580,11 +637,24 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         }
     }
 
+    /// <summary>
+    ///     Whether a section's card shows in the preview right now: it must be enabled in the catalog <b>and</b>
+    ///     not folded into the unified header. The "Unified item header" enhancement absorbs the Item Level and
+    ///     Damage/Defense sections, so while it's on those don't appear as — or reorder like — separate cards.
+    /// </summary>
+    private bool IsPreviewVisible(LayoutSection section)
+    {
+        if (EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedItemHeader)
+            && section is LayoutSection.DamageDefense or LayoutSection.ItemLevelClassJob)
+            return false;
+        return SectionVisibility.IsShown(_config, section);
+    }
+
     private List<LayoutSection> VisibleOrder()
     {
         var visible = new List<LayoutSection>();
         foreach (var section in _config.SectionOrder)
-            if (SectionVisibility.IsShown(_config, section))
+            if (IsPreviewVisible(section))
                 visible.Add(section);
         return visible;
     }
@@ -606,7 +676,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         var order = _config.SectionOrder;
         var queue = new Queue<LayoutSection>(newVisible);
         for (var i = 0; i < order.Count && queue.Count > 0; i++)
-            if (SectionVisibility.IsShown(_config, order[i]))
+            if (IsPreviewVisible(order[i]))
                 order[i] = queue.Dequeue();
     }
 }

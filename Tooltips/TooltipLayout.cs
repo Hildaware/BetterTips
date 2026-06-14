@@ -46,6 +46,22 @@ public static class TooltipLayout
     /// <summary>The control-hints (keybind) row, pinned to the bottom; the relayout places it last.</summary>
     public const uint ControlHintsBlockId = 2;
 
+    /// <summary>
+    ///     Sub-nodes of the header (<c>#17</c>) the "Unified item header" enhancement hides when it replaces
+    ///     the header: the name (<c>#33</c>), icon component (<c>#32</c>), quantity "(Total: n)" (<c>#34</c>),
+    ///     category line (<c>#35</c>), and the put-in indicators (<c>#24</c>). The binding/untradable/unique
+    ///     line (<see cref="BindingLineBlockId" />) is deliberately left alone.
+    /// </summary>
+    public static readonly uint[] UnifiedHeaderHiddenNodeIds = [32, 33, 34, 35, 24];
+
+    /// <summary>The header's binding/untradable/unique line (<c>#20</c>) — kept visible; the unified block is
+    /// placed just below it.</summary>
+    public const uint BindingLineBlockId = 20;
+
+    /// <summary>The durability/spiritbond gauge block (<c>#7</c>, two vertical bars). The Unified item header
+    /// re-positions it to sit directly left of its icon (it's otherwise left floating at the old header top).</summary>
+    public const uint GaugeBlockId = 7;
+
     public static readonly IReadOnlyList<LayoutSectionInfo> Sections =
     [
         // List order is the default top-to-bottom (best-effort match for the game's natural order). It only
