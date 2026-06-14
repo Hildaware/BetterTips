@@ -93,6 +93,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // Set by "/btips dumpnodes"; on the next addon update we log the node tree, then clear it.
     private volatile bool _nodeDumpRequested;
 
+    // "/btips watch": when on, log each ordered block's live geometry (id/parent/Y/Height/visible/in-plan/
+    // has-text) once a second from the per-frame pass, so a layout problem can be read off /xllog directly.
+    private volatile bool _watch;
+    private int _watchFrame;
+
     public TooltipRelayoutController(IAddonLifecycle addonLifecycle, IGameGui gameGui,
         Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet)
     {
@@ -154,6 +159,14 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _nodeDumpRequested = true;
     }
 
+    /// <summary>Toggle the per-frame geometry watch (dev aid). Returns the new state.</summary>
+    public bool ToggleWatch()
+    {
+        _watch = !_watch;
+        _watchFrame = 0;
+        return _watch;
+    }
+
     // Content-change events: recompute the plan (and apply it).
     private void OnUpdateEvent(AddonEvent type, AddonArgs args)
     {
@@ -181,11 +194,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     {
         try
         {
-            if (!_hasPlan) return;
             var addon = (AddonItemDetail*)args.Addon.Address;
             if (addon is null) return;
 
-            ApplyPlan(addon);
+            if (_hasPlan) ApplyPlan(addon);
+            if (_watch) LogWatch(addon);
         }
         catch (Exception ex)
         {
@@ -528,9 +541,20 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         return frame;
     }
 
-    /// <summary>True if a visible, non-blank text node currently sits under <paramref name="blockId" /> —
-    /// i.e. the block has real content. A block whose header text the game has hidden (an empty shell, e.g.
-    /// a Materia block with no materia) has none, so it reads false.</summary>
+    /// <summary>
+    ///     True if a visible, non-blank text node currently sits under <paramref name="blockId" /> — i.e. the
+    ///     block has real content. A block whose header text the game has hidden (an empty shell, e.g. a
+    ///     Materia block with no materia) has none, so it reads false.
+    ///     <para>
+    ///         <b>Must descend into component nodes.</b> Some blocks render their text inside <em>component</em>
+    ///         nodes — the damage/defense stat lines live in <c>DefenseComponentNode</c> etc. — and a
+    ///         component's text is in the component's <em>own</em> ULD list, not the addon's flat
+    ///         <c>NodeList</c> we scan here. Scanning only the flat list makes such a block read "no text", so
+    ///         it gets excluded from the layout as if it were a hollow shell; it then stays at its natural top
+    ///         position while the next section is stacked on top of it (the damage/item-level overlap). So we
+    ///         also descend into any component child of the block.
+    ///     </para>
+    /// </summary>
     private static bool BlockHasVisibleText(AddonItemDetail* addon, uint blockId)
     {
         var list = addon->UldManager.NodeList;
@@ -540,18 +564,62 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         for (var i = 0; i < count; i++)
         {
             var node = list[i];
-            if (node is null || node->Type != NodeType.Text) continue;
+            if (node is null) continue;
             if ((node->NodeFlags & NodeFlags.Visible) == 0) continue;
             if (!IsDescendantOf(node, blockId)) continue;
 
-            string s;
-            try { s = ((AtkTextNode*)node)->NodeText.ToString(); }
-            catch { continue; }
-
-            if (!string.IsNullOrWhiteSpace(s)) return true;
+            if (node->Type == NodeType.Text)
+            {
+                if (TextNodeHasContent((AtkTextNode*)node)) return true;
+            }
+            else if ((uint)node->Type >= 1000)
+            {
+                // A component descendant — its text lives in the component's own ULD list, not the flat list.
+                if (ComponentHasVisibleText((AtkComponentNode*)node, 0)) return true;
+            }
         }
 
         return false;
+    }
+
+    /// <summary>True if the component (or a nested component within it) holds a visible, non-blank text node.
+    /// Depth-capped against pathological nesting.</summary>
+    private static bool ComponentHasVisibleText(AtkComponentNode* componentNode, int depth)
+    {
+        if (depth > 4) return false;
+        var component = componentNode->Component;
+        if (component is null) return false;
+        var list = component->UldManager.NodeList;
+        if (list is null) return false;
+        var count = component->UldManager.NodeListCount;
+
+        for (var i = 0; i < count; i++)
+        {
+            var node = list[i];
+            if (node is null) continue;
+            if ((node->NodeFlags & NodeFlags.Visible) == 0) continue;
+
+            if (node->Type == NodeType.Text)
+            {
+                if (TextNodeHasContent((AtkTextNode*)node)) return true;
+            }
+            else if ((uint)node->Type >= 1000)
+            {
+                if (ComponentHasVisibleText((AtkComponentNode*)node, depth + 1)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>True if a text node currently holds non-whitespace text (guarded — a bad pointer must not
+    /// throw out of the framework callback).</summary>
+    private static bool TextNodeHasContent(AtkTextNode* textNode)
+    {
+        string s;
+        try { s = textNode->NodeText.ToString(); }
+        catch { return false; }
+        return !string.IsNullOrWhiteSpace(s);
     }
 
     /// <summary>
@@ -643,6 +711,57 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         if (value < 1f) return 1;
         if (value > ushort.MaxValue) return ushort.MaxValue;
         return (ushort)value;
+    }
+
+    /// <summary>
+    ///     Dev aid (<c>/btips watch</c>): once a second, log every block in the user's order — whether or not
+    ///     the plan currently includes it — with its live <c>Y</c>/<c>Height</c>/parent, visibility, in-plan
+    ///     flag, and whether it reads as having text. This is what surfaced the damage/item-level overlap: a
+    ///     block reading <c>vis=True inPlan=False hasText=False</c> is being dropped from layout while still
+    ///     occupying space. A <c>!!NOT-ROOT-CHILD</c> flag marks a block whose parent isn't root (which would
+    ///     break the root-absolute positioning). Runs only while the watch is on.
+    /// </summary>
+    private void LogWatch(AddonItemDetail* addon)
+    {
+        if (_watchFrame++ % 60 != 0) return; // ~once per second at 60fps
+
+        var root = addon->RootNode;
+        var rootId = root is not null ? root->NodeId : 0;
+        var header = addon->GetNodeById(TooltipLayout.HeaderBlockId);
+        var anchor = header is not null ? header->Y + header->Height : -1f;
+
+        _log.Information(
+            $"BetterTips WATCH: hasPlan={_hasPlan} reorder={_reorderActive} anchor={anchor:0} " +
+            $"rootH={(root is not null ? root->Height : 0)} hovered={_lastHovered}");
+
+        foreach (var section in _sectionOrder)
+        {
+            if (TooltipLayout.IsCustom(section)) continue; // no native node to inspect
+
+            var info = TooltipLayout.Find(section);
+            if (info is null) continue;
+
+            foreach (var id in info.BlockIds)
+            {
+                var node = addon->GetNodeById(id);
+                if (node is null)
+                {
+                    _log.Information($"BetterTips WATCH:   [{section}] #{id} <null>");
+                    continue;
+                }
+
+                var parentId = node->ParentNode is not null ? node->ParentNode->NodeId : 0;
+                var rootChild = parentId == rootId ? "" : " !!NOT-ROOT-CHILD";
+                var vis = (node->NodeFlags & NodeFlags.Visible) != 0;
+                var inPlan = false;
+                foreach (var (pid, _) in _planBlocks)
+                    if (pid == id) { inPlan = true; break; }
+
+                _log.Information(
+                    $"BetterTips WATCH:   [{section}] #{id} <#{parentId}{rootChild} y={node->Y:0} h={node->Height:0} " +
+                    $"vis={vis} inPlan={inPlan} hasText={BlockHasVisibleText(addon, id)}");
+            }
+        }
     }
 
     /// <summary>Dev aid (<c>/btips dumpnodes</c>): logs the ItemDetail node list (id / parent / type /

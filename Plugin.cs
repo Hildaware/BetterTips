@@ -195,7 +195,7 @@ public sealed class Plugin : IDalamudPlugin
 
         _commandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the visual editor. \"dump\"/\"dumpnodes\" log tooltip internals; \"classic\" opens the ImGui settings."
+            HelpMessage = "Open the visual editor. \"dump\"/\"dumpnodes\"/\"watch\" log tooltip internals; \"classic\" opens the ImGui settings."
         });
         _commandManager.AddHandler(CommandAlias, new CommandInfo(OnCommand)
         {
@@ -242,6 +242,13 @@ public sealed class Plugin : IDalamudPlugin
                 // Signature-free: walks the ItemDetail node tree to find leftover static label nodes.
                 _relayout.RequestNodeDump();
                 _log.Information("BetterTips: hover an item to dump its ItemDetail node tree to the log (/xllog).");
+                return;
+
+            case "watch":
+                // Per-frame geometry watch: logs each ordered block's live Y/Height/parent/in-plan once a
+                // second so a layout problem can be read off /xllog. Toggle off when done.
+                var on = _relayout.ToggleWatch();
+                _log.Information($"BetterTips: layout watch {(on ? "ON — hover an item; check /xllog" : "OFF")}.");
                 return;
 
             case "classic":
