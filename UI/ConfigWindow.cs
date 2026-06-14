@@ -129,6 +129,29 @@ public sealed class ConfigWindow : Window
                 ImGui.SetTooltip(info.Description);
         }
 
+        // Curated enhancement toggles (shares EnhancementCatalog with the native editor so the two can't
+        // drift). Empty until the first one ships, so the whole section is skipped while there are none.
+        if (EnhancementCatalog.All.Length > 0)
+        {
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.TextDisabled("Enhancements:");
+            ImGui.Spacing();
+
+            foreach (var info in EnhancementCatalog.All)
+            {
+                var enabled = EnhancementCatalog.IsEnabled(_config, info.Id);
+                if (ImGui.Checkbox($"{info.Label}##enh_{(int)info.Id}", ref enabled))
+                {
+                    EnhancementCatalog.SetEnabled(_config, info.Id, enabled);
+                    changed = true;
+                }
+
+                if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(info.Description))
+                    ImGui.SetTooltip(info.Description);
+            }
+        }
+
         return changed;
     }
 

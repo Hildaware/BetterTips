@@ -55,6 +55,14 @@ public sealed class Configuration : IPluginConfiguration
     /// </summary>
     public bool ShowGearSets { get; set; } = true;
 
+    /// <summary>
+    ///     The curated <see cref="Enhancement" /> toggles the user has enabled (the editor's "Enhancements"
+    ///     tab). Opt-in: anything not listed here is off, so an old config (missing the field) starts empty
+    ///     and needs no migration. Serialized by enum value, so <see cref="Enhancement" /> members are
+    ///     append-only (see <see cref="UI.EnhancementCatalog" />).
+    /// </summary>
+    public HashSet<Enhancement> EnabledEnhancements { get; set; } = [];
+
     public int Version { get; set; } = 3;
 
     public void Save(IDalamudPluginInterface pi)
