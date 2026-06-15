@@ -29,7 +29,8 @@ public sealed class UnifiedHeaderNodes
     public const uint LabelFontSize = 12;        // descriptor / Item Level / class-job-text labels
     public const uint CategoryFontSize = 10;     // the item-category line
     public const float IconBox = 40f;
-    public const float IconX = 24f;              // icon left edge — clears the durability/spiritbond gauges
+    public const float IconX = HPad;             // icon left edge — normal tooltip padding (the gauge bars are
+                                                 // hidden now, so the icon no longer needs to clear them)
     public const float IconDropY = 4f;           // the icon (+ frame) sits this far below the name divider
     public const float IconFrameOutset = 4.5f;   // the frame overlay extends this far past the icon
     public const float JobIconSize = 24f;
@@ -37,9 +38,6 @@ public sealed class UnifiedHeaderNodes
     public const float JobRowOffsetY = -26f;     // job-row offset from content bottom (negative lifts it up)
     public const float IlvlTextWidth = 62f;      // ~width of the "Item Level" label (drives its divider)
     public const float ReqTextWidth = 56f;       // ~width of the "Req Level" label (drives its divider)
-
-    /// <summary>The icon's Y offset from the block top (the controller aligns the native gauges to it).</summary>
-    public const float IconOffsetY = NameFontSize + 22f + IconDropY;
 
     private const string IconFrameTexture = "ui/uld/IconA_Frame.tex";
     private const string BarTexture = "ui/uld/ItemDetail.tex";
@@ -55,38 +53,21 @@ public sealed class UnifiedHeaderNodes
     private static readonly Vector4 CurrentJobTextColor = new(0x5A / 255f, 0xE6 / 255f, 0x5A / 255f, 1f);
     private static readonly Vector4 CurrentJobBorderColor = new(0x4B / 255f, 0xE6 / 255f, 0x5A / 255f, 0.5f); // green outline, 50% opacity
 
-    // MultiplyColor is the native 0-100 scale (100 = neutral), so these tint the light bar texture.
-    private static readonly Vector3 DurabilityBarTint = new(100f, 78f, 30f);      // gold-ish (mock gauge)
-    private static readonly Vector3 SpiritbondBarTint = new(40f, 78f, 100f);      // cyan-ish (mock gauge)
-
     private NodeBase? _parent;
-    private bool _mockBars;
     private TextNode _name = null!, _category = null!, _primary = null!, _descriptor = null!;
     private TextNode _ilvlLabel = null!, _ilvlValue = null!, _reqLabel = null!, _req = null!, _jobText = null!;
     private IconImageNode _icon = null!;
     private SimpleImageNode _frame = null!, _nameDivider = null!, _ilvlDivider = null!, _reqDivider = null!, _bottomDivider = null!;
     private readonly ColorImageNode[] _jobBorderBars = new ColorImageNode[4];  // top, bottom, left, right
-    private SimpleImageNode? _durabilityBar, _spiritbondBar;
     private readonly List<IconImageNode> _jobIcons = [];
 
-    /// <summary>Create the persistent nodes attached to <paramref name="parent" /> (call once). The preview
-    /// passes <paramref name="mockDurabilityBars" /> = true to draw stand-in gauges; the live tooltip uses the
-    /// game's own gauge node instead.</summary>
-    public void Build(NodeBase parent, bool mockDurabilityBars = false)
+    /// <summary>Create the persistent nodes attached to <paramref name="parent" /> (call once).</summary>
+    public void Build(NodeBase parent)
     {
         _parent = parent;
-        _mockBars = mockDurabilityBars;
 
         _name = MakeText(NameFontSize, AlignmentType.Center, CreamColor, autoAdjust: false);
         _nameDivider = MakeBar();
-
-        if (_mockBars)
-        {
-            _durabilityBar = MakeBar();
-            _durabilityBar.MultiplyColor = DurabilityBarTint;
-            _spiritbondBar = MakeBar();
-            _spiritbondBar.MultiplyColor = SpiritbondBarTint;
-        }
 
         _icon = new IconImageNode { FitTexture = true, IsVisible = false };
         _icon.AttachNode(parent);
@@ -160,15 +141,6 @@ public sealed class UnifiedHeaderNodes
             _icon.Position = new Vector2(IconX, iconY);
             _frame.Size = new Vector2(IconBox + IconFrameOutset * 2f, IconBox + IconFrameOutset * 2f);
             _frame.Position = new Vector2(IconX - IconFrameOutset, iconY - IconFrameOutset);
-        }
-
-        // Stand-in durability/spiritbond gauges (preview only) — left of the icon, aligned with it.
-        if (_mockBars && _durabilityBar is not null && _spiritbondBar is not null)
-        {
-            _durabilityBar.Size = new Vector2(5f, IconBox);
-            _durabilityBar.Position = new Vector2(6f, iconY);
-            _spiritbondBar.Size = new Vector2(5f, IconBox);
-            _spiritbondBar.Position = new Vector2(12f, iconY);
         }
 
         // Category / big primary stat / descriptor (right of the icon).
