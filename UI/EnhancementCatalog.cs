@@ -18,7 +18,9 @@ internal static class EnhancementCatalog
     public static readonly EnhancementInfo[] All =
     [
         new(Enhancement.UnifiedItemHeader, "Unified item header",
-            "Merge the icon, name, item level, and damage/defense into one redesigned section at the top.")
+            "Merge the icon, name, item level, and damage/defense into one redesigned section at the top."),
+        new(Enhancement.UnifiedBonusesMateria, "Unified bonuses & materia",
+            "Merge Bonuses and Materia into one two-column section: attributes (green / pink / gold), then the melded materia in the same form.")
     ];
 
     public static bool IsEnabled(Configuration.Configuration config, Enhancement enhancement)

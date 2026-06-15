@@ -32,6 +32,14 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
     private ResNode? _enhancementsTab;
     private TabBarNode? _tabBar;
 
+    // The Structure-tab checkboxes for the two sections the "Unified bonuses & materia" enhancement folds in;
+    // kept so we can lock them (forced checked + dimmed) while that enhancement is on.
+    private CheckboxNode? _bonusesCheck;
+    private CheckboxNode? _materiaCheck;
+    private bool _suppressToggle;
+    private static readonly Vector4 LockedLabelColor = new(0.5f, 0.5f, 0.5f, 1f);
+    private static readonly Vector4 NormalLabelColor = ColorHelper.GetColor(8);
+
     public TooltipControlWindow(Configuration.Configuration config, Action onChanged,
         TooltipPreviewWindow preview, IPluginLog log)
     {
@@ -77,6 +85,8 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
         _structureTab = null;
         _enhancementsTab = null;
         _tabBar = null;
+        _bonusesCheck = null;
+        _materiaCheck = null;
     }
 
     /// <summary>App-level toggles, above the tabs and always visible.</summary>
@@ -174,14 +184,28 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             check.DisableAutoResize = true;
             check.OnClick = isChecked =>
             {
+                if (_suppressToggle) return;
+                // Bonuses & Materia are folded into the unified bonuses/materia enhancement while it's on, so
+                // they can't be hidden from here — snap the checkbox back to checked.
+                if (IsFoldedByBonusesEnhancement(section))
+                {
+                    SetCheckedSilent(check, true);
+                    return;
+                }
+
                 SectionVisibility.SetShown(_config, section, isChecked);
                 check.IsChecked = isChecked;
                 _onChanged();
                 _preview.Refresh();
             };
             check.AttachNode(parent);
+            if (section == LayoutSection.AttributeBonuses) _bonusesCheck = check;
+            else if (section == LayoutSection.Materia) _materiaCheck = check;
             y += RowHeight;
         }
+
+        // Reflect the enhancement's lock on the two folded sections from the moment the window opens.
+        ApplyBonusesMateriaLock();
 
         y += 8f;
         AddLabel(parent, "Details", x, ref y, width);
@@ -240,11 +264,43 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
                 EnhancementCatalog.SetEnabled(_config, enhancement, isChecked);
                 check.IsChecked = isChecked;
                 _onChanged();
+                // The unified bonuses/materia enhancement locks the Bonuses & Materia Structure-tab toggles.
+                if (enhancement == Enhancement.UnifiedBonusesMateria) ApplyBonusesMateriaLock();
                 _preview.Refresh();
             };
             check.AttachNode(parent);
             y += RowHeight;
         }
+    }
+
+    /// <summary>Whether <paramref name="section" /> is currently folded into (and so un-hideable by) the
+    /// "Unified bonuses &amp; materia" enhancement.</summary>
+    private bool IsFoldedByBonusesEnhancement(LayoutSection section)
+        => section is LayoutSection.AttributeBonuses or LayoutSection.Materia
+           && EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria);
+
+    /// <summary>Lock (force checked + dim) or restore the Bonuses &amp; Materia Structure-tab checkboxes to
+    /// match the enhancement's current state.</summary>
+    private void ApplyBonusesMateriaLock()
+    {
+        LockCheck(_bonusesCheck, LayoutSection.AttributeBonuses);
+        LockCheck(_materiaCheck, LayoutSection.Materia);
+    }
+
+    private void LockCheck(CheckboxNode? check, LayoutSection section)
+    {
+        if (check is null) return;
+        var locked = EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria);
+        SetCheckedSilent(check, locked || SectionVisibility.IsShown(_config, section));
+        check.Label.TextColor = locked ? LockedLabelColor : NormalLabelColor;
+    }
+
+    /// <summary>Set a checkbox's state without firing its <c>OnClick</c> (avoids the snap-back recursing).</summary>
+    private void SetCheckedSilent(CheckboxNode check, bool value)
+    {
+        _suppressToggle = true;
+        check.IsChecked = value;
+        _suppressToggle = false;
     }
 
     private void AddLabel(ResNode parent, string text, float x, ref float y, float width)

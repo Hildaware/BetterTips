@@ -23,5 +23,16 @@ public enum Enhancement
     ///     see the unified-header builder. The preview renders the redesign; the live relayout folds the
     ///     three native blocks into the custom one (Phase 2).
     /// </summary>
-    UnifiedItemHeader
+    UnifiedItemHeader,
+
+    /// <summary>
+    ///     Merge the attribute <b>Bonuses</b> block (<c>#97</c>) and the <b>Materia</b> block (<c>#93</c>) into
+    ///     one redesigned section: the bonuses listed in two columns (physical attributes green, mental
+    ///     attributes pink, the remaining secondary "bonuses" gold), then — after a little vertical space — the
+    ///     melded materia in the same two-column form (the materia icon followed by the stat boost it grants,
+    ///     colored the same way; the materia name is omitted). Attribute bonuses come from Lumina; melded
+    ///     materia is per-instance, so it is scraped from the rendered native block. While this is on, the
+    ///     editor's Structure tab can't hide the Bonuses or Materia sections (they're folded in here).
+    /// </summary>
+    UnifiedBonusesMateria
 }
