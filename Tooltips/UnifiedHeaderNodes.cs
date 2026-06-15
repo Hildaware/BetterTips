@@ -3,6 +3,7 @@ using KamiToolKit.BaseTypes;
 using KamiToolKit.Enums;
 using KamiToolKit.Nodes;
 using KamiToolKit.Nodes.Simplified;
+using Lumina.Text.ReadOnly;
 
 namespace BetterTips.Tooltips;
 
@@ -23,20 +24,19 @@ public sealed class UnifiedHeaderNodes
     // Geometry — the single source of truth for the unified header's layout (live + preview). Tune here.
     public const float HPad = 16f;               // horizontal padding from the tooltip edges (matches natives)
     public const uint NameFontSize = 16;
-    public const uint PrimaryFontSize = 28;      // the big primary-stat number
-    public const uint ItemLevelFontSize = 22;
-    public const uint ReqFontSize = 13;
+    public const uint PrimaryFontSize = 18;      // the big primary-stat number
+    public const uint ItemLevelFontSize = 16;    // the Item Level / Req Level numbers
     public const uint LabelFontSize = 12;        // descriptor / Item Level / class-job-text labels
     public const uint CategoryFontSize = 10;     // the item-category line
-    public const float IconBox = 48f;
+    public const float IconBox = 40f;
     public const float IconX = 24f;              // icon left edge — clears the durability/spiritbond gauges
-    public const float IconDropY = 10f;          // the icon (+ frame) sits this far below the name divider
+    public const float IconDropY = 4f;           // the icon (+ frame) sits this far below the name divider
     public const float IconFrameOutset = 4.5f;   // the frame overlay extends this far past the icon
     public const float JobIconSize = 24f;
     public const float JobIconGap = 4f;
-    public const float JobGapAbove = 18f;        // breathing room above the job-icon row
-    public const float JobRowX = 100f;           // left edge of the job-icon row
+    public const float JobRowOffsetY = -26f;     // job-row offset from content bottom (negative lifts it up)
     public const float IlvlTextWidth = 62f;      // ~width of the "Item Level" label (drives its divider)
+    public const float ReqTextWidth = 56f;       // ~width of the "Req Level" label (drives its divider)
 
     /// <summary>The icon's Y offset from the block top (the controller aligns the native gauges to it).</summary>
     public const float IconOffsetY = NameFontSize + 22f + IconDropY;
@@ -47,22 +47,25 @@ public sealed class UnifiedHeaderNodes
     private static readonly Vector4 CreamColor = new(0xE8 / 255f, 0xDD / 255f, 0xC4 / 255f, 1f);
     private static readonly Vector4 MidGreyColor = new(0xB0 / 255f, 0xB0 / 255f, 0xB0 / 255f, 1f);
     private static readonly Vector4 ItemLevelColor = new(0xE0 / 255f, 0xA8 / 255f, 0x60 / 255f, 1f);
+    private static readonly Vector4 RequirementUnmetColor = new(0xE0 / 255f, 0x3C / 255f, 0x32 / 255f, 1f);
     private static readonly Vector4 OutlineColor = new(0f, 0f, 0f, 1f);
-    private const float BorderOutset = 2f;  // the current-job outline extends this far past the icon
+    private const float BorderOutset = -1f;    // the current-job frame sits this far outside the icon edge (negative insets it, shrinking the frame 4px on X/Y)
+    private const float BorderThickness = 2f;  // thickness of each of the four green frame bars
+    private const int JobIconPoolSize = 16;    // matches UnifiedHeaderData.MaxJobIcons (never more icons than this)
     private static readonly Vector4 CurrentJobTextColor = new(0x5A / 255f, 0xE6 / 255f, 0x5A / 255f, 1f);
+    private static readonly Vector4 CurrentJobBorderColor = new(0x4B / 255f, 0xE6 / 255f, 0x5A / 255f, 0.5f); // green outline, 50% opacity
 
     // MultiplyColor is the native 0-100 scale (100 = neutral), so these tint the light bar texture.
-    private static readonly Vector3 CurrentJobBorderTint = new(15f, 100f, 25f);   // green outline
     private static readonly Vector3 DurabilityBarTint = new(100f, 78f, 30f);      // gold-ish (mock gauge)
     private static readonly Vector3 SpiritbondBarTint = new(40f, 78f, 100f);      // cyan-ish (mock gauge)
 
     private NodeBase? _parent;
     private bool _mockBars;
     private TextNode _name = null!, _category = null!, _primary = null!, _descriptor = null!;
-    private TextNode _ilvlLabel = null!, _ilvlValue = null!, _req = null!, _jobText = null!;
+    private TextNode _ilvlLabel = null!, _ilvlValue = null!, _reqLabel = null!, _req = null!, _jobText = null!;
     private IconImageNode _icon = null!;
-    private SimpleImageNode _frame = null!, _nameDivider = null!, _ilvlDivider = null!, _bottomDivider = null!;
-    private SimpleImageNode _jobBorder = null!;
+    private SimpleImageNode _frame = null!, _nameDivider = null!, _ilvlDivider = null!, _reqDivider = null!, _bottomDivider = null!;
+    private readonly ColorImageNode[] _jobBorderBars = new ColorImageNode[4];  // top, bottom, left, right
     private SimpleImageNode? _durabilityBar, _spiritbondBar;
     private readonly List<IconImageNode> _jobIcons = [];
 
@@ -85,12 +88,6 @@ public sealed class UnifiedHeaderNodes
             _spiritbondBar.MultiplyColor = SpiritbondBarTint;
         }
 
-        // The current-job outline sits behind the job icons (which are created lazily later), so it reads as
-        // a border around the icon on top of it.
-        _jobBorder = MakeBar();
-        _jobBorder.MultiplyColor = CurrentJobBorderTint;
-        _jobBorder.IsVisible = false;
-
         _icon = new IconImageNode { FitTexture = true, IsVisible = false };
         _icon.AttachNode(parent);
         _frame = new SimpleImageNode
@@ -108,17 +105,39 @@ public sealed class UnifiedHeaderNodes
         _ilvlLabel = MakeText(LabelFontSize, AlignmentType.TopRight, MidGreyColor, autoAdjust: false);
         _ilvlDivider = MakeBar();
         _ilvlValue = MakeText(ItemLevelFontSize, AlignmentType.TopRight, ItemLevelColor, autoAdjust: false);
-        _req = MakeText(ReqFontSize, AlignmentType.TopLeft, CreamColor, autoAdjust: true);
+        _reqLabel = MakeText(LabelFontSize, AlignmentType.TopRight, MidGreyColor, autoAdjust: false);
+        _reqDivider = MakeBar();
+        _req = MakeText(ItemLevelFontSize, AlignmentType.TopRight, CreamColor, autoAdjust: false);
         _jobText = MakeText(LabelFontSize, AlignmentType.TopLeft, MidGreyColor, autoAdjust: true);
         _bottomDivider = MakeBar();
+
+        // Pre-create the job-icon pool, THEN the border bars, so the bars are the last-attached siblings and
+        // therefore always render ON TOP of every job icon (in KTK, a later-attached sibling draws on top — the
+        // same rule that puts the item _frame over _icon). The pool is fixed because ResolveJobIcons never
+        // returns more than its MaxJobIcons (it falls back to text beyond that), so a lazy path can't outrun it.
+        // The border is four thin SOLID-COLOR bars forming a frame around the current job icon — ColorImageNode
+        // renders a flat fill regardless of texture (the old MultiplyColor-tinted bar texture rendered nothing
+        // when stretched into the thin vertical left/right bars, so the outline never appeared in-game).
+        for (var i = 0; i < JobIconPoolSize; i++)
+            _jobIcons.Add(MakeJobIcon());
+
+        for (var i = 0; i < _jobBorderBars.Length; i++)
+        {
+            var bar = new ColorImageNode { Color = CurrentJobBorderColor, IsVisible = false };
+            bar.AttachNode(parent);
+            _jobBorderBars[i] = bar;
+        }
     }
 
     /// <summary>Fill the nodes from <paramref name="data" /> and lay them out within <paramref name="width" />;
     /// returns the block's total height. Call when the data changes (not every frame).</summary>
     public float Update(UnifiedHeaderData data, float width)
     {
-        // Name (centered, rarity-colored) + thick divider.
-        _name.String = data.Name;
+        // Name (centered, rarity-colored) + thick divider. Prefer the rendered native name (raw SeString)
+        // so the game's payload glyphs (HQ mark, etc.) show; fall back to the plain Lumina name (preview).
+        _name.String = data.NameRaw is not null
+            ? new ReadOnlySeString(data.NameRaw)
+            : data.Name;
         _name.TextColor = RarityColor(data.Rarity);
         _name.Size = new Vector2(width, NameFontSize + 8f);
         _name.Position = new Vector2(0f, 0f);
@@ -154,58 +173,93 @@ public sealed class UnifiedHeaderNodes
 
         // Category / big primary stat / descriptor (right of the icon).
         var statX = IconX + IconBox + 14f;
-        SetText(_category, data.Category, statX, bodyTop);
-        SetText(_primary, data.PrimaryValue, statX, bodyTop + 14f);
-        SetText(_descriptor, data.PrimaryLabel, statX, bodyTop + 46f);
-        var midBottom = bodyTop + Math.Max(IconDropY + IconBox, 58f);
+        SetText(_category, data.Category, statX, bodyTop - 1f);
+        SetText(_primary, data.PrimaryValue, statX, bodyTop + 12f);
+        SetText(_descriptor, data.PrimaryLabel, statX, bodyTop + 33f);
+
+        // Item / Required Level share this tight stacked formatting (label, thin divider, value).
+        const float headerToDivider = 16f;   // label top → divider (trimmed from 20)
+        const float dividerHeight = 3f;       // divider thickness (trimmed from 5)
+        const float dividerToValue = 2f;      // divider → value (trimmed by the same amount as the header gap)
 
         // Item Level (right column): label, divider the width of the label text, value — all right-aligned.
         var rightEdge = width - HPad;
         var ilvlX = rightEdge - IlvlTextWidth;
+        var ilvlLabelY = bodyTop - 1f;  // top-aligned with the category line
         _ilvlLabel.String = "Item Level";
         _ilvlLabel.Size = new Vector2(IlvlTextWidth, LabelFontSize + 6f);
-        _ilvlLabel.Position = new Vector2(ilvlX, bodyTop + 2f);
-        _ilvlDivider.Size = new Vector2(IlvlTextWidth, 5f);
-        _ilvlDivider.Position = new Vector2(ilvlX, bodyTop + 22f);
+        _ilvlLabel.Position = new Vector2(ilvlX, ilvlLabelY);
+        _ilvlDivider.Size = new Vector2(IlvlTextWidth, dividerHeight);
+        _ilvlDivider.Position = new Vector2(ilvlX, ilvlLabelY + headerToDivider);
+        var ilvlValueY = ilvlLabelY + headerToDivider + dividerToValue;
         _ilvlValue.String = data.ItemLevel > 0 ? data.ItemLevel.ToString() : "—";
         _ilvlValue.Size = new Vector2(IlvlTextWidth, ItemLevelFontSize + 6f);
-        _ilvlValue.Position = new Vector2(ilvlX, bodyTop + 28f);
+        _ilvlValue.Position = new Vector2(ilvlX, ilvlValueY);
 
-        // Bottom row: Req. Lv (left) + equippable-job icons, or the class/job text for a broad category.
-        var bottomY = midBottom + JobGapAbove;
-        SetText(_req, $"Req. Lv {data.RequiredLevel}", HPad, bottomY);
-        LayoutJobs(data, bottomY);
+        // Req Level (right column, directly below Item Level): same label/divider/value formatting. The 8px
+        // inter-block gap (down from 12) nudges this section up an extra 4px → 6px above its prior spot.
+        var reqLabelY = ilvlValueY + ItemLevelFontSize + 8f;
+        var reqX = rightEdge - ReqTextWidth;
+        _reqLabel.String = "Req Level";
+        _reqLabel.Size = new Vector2(ReqTextWidth, LabelFontSize + 6f);
+        _reqLabel.Position = new Vector2(reqX, reqLabelY);
+        _reqDivider.Size = new Vector2(ReqTextWidth, dividerHeight);
+        _reqDivider.Position = new Vector2(reqX, reqLabelY + headerToDivider);
+        var reqValueY = reqLabelY + headerToDivider + dividerToValue;
+        _req.String = data.RequiredLevel > 0 ? data.RequiredLevel.ToString() : "—";
+        _req.TextColor = data.MeetsLevelRequirement ? CreamColor : RequirementUnmetColor;
+        _req.Size = new Vector2(ReqTextWidth, ItemLevelFontSize + 6f);
+        _req.Position = new Vector2(reqX, reqValueY);
 
-        var bottomDividerY = bottomY + JobIconSize + 8f;
+        // The bottom row sits below the taller of the icon and the (Item + Required Level) right column.
+        var iconBottom = iconY + IconBox;
+        var rightColumnBottom = reqValueY + ItemLevelFontSize + 6f;
+        var contentBottom = Math.Max(iconBottom, rightColumnBottom);
+
+        // Bottom row: equippable-job icons (full-width on the left, wrapping), or class/job text. Lifted up
+        // (negative offset) to sit beside the lower right column — they share no horizontal space with it.
+        var bottomY = contentBottom + JobRowOffsetY;
+        var jobRowBottom = LayoutJobs(data, width, bottomY);
+
+        var bottomDividerY = jobRowBottom + 8f;
         _bottomDivider.Size = new Vector2(width - HPad * 2f, 4f);
         _bottomDivider.Position = new Vector2(HPad, bottomDividerY);
 
         return bottomDividerY + 8f;
     }
 
-    /// <summary>The job-icon row (with a green outline on the current job), or the class/job text fallback for
-    /// a broad category (greened when the current job can equip it).</summary>
-    private void LayoutJobs(UnifiedHeaderData data, float bottomY)
+    /// <summary>The job-icon row (full-width, left-aligned, wrapping when it overflows; a green outline marks
+    /// the current job), or the class/job text fallback for a broad category (greened when the current job can
+    /// equip it). Returns the row's bottom Y.</summary>
+    private float LayoutJobs(UnifiedHeaderData data, float width, float bottomY)
     {
         if (data.JobIconIds.Count == 0)
         {
-            _jobBorder.IsVisible = false;
+            HideJobBorder();
             foreach (var icon in _jobIcons) icon.IsVisible = false;
 
             _jobText.IsVisible = true;
             _jobText.String = data.ClassJobText;
             _jobText.TextColor = data.CurrentJobEquippable ? CurrentJobTextColor : MidGreyColor;
-            _jobText.Position = new Vector2(JobRowX, bottomY);
-            return;
+            _jobText.Position = new Vector2(HPad, bottomY);
+            return bottomY + JobIconSize;
         }
 
         _jobText.IsVisible = false;
 
-        var jobX = JobRowX;
-        var jobY = bottomY - 4f;
+        var rightLimit = width - HPad;
+        var jobX = HPad;
+        var jobY = bottomY;
         var borderPlaced = false;
         for (var i = 0; i < data.JobIconIds.Count; i++)
         {
+            // Wrap to a new row once the next icon would overflow the right edge.
+            if (jobX > HPad && jobX + JobIconSize > rightLimit)
+            {
+                jobX = HPad;
+                jobY += JobIconSize + JobIconGap;
+            }
+
             var iconId = data.JobIconIds[i];
             var icon = GetOrCreateJobIcon(i);
             icon.IconId = iconId;
@@ -215,18 +269,45 @@ public sealed class UnifiedHeaderNodes
 
             if (!borderPlaced && data.CurrentJobIconId != 0 && iconId == data.CurrentJobIconId)
             {
-                _jobBorder.Size = new Vector2(JobIconSize + BorderOutset * 2f, JobIconSize + BorderOutset * 2f);
-                _jobBorder.Position = new Vector2(jobX - BorderOutset, jobY - BorderOutset);
-                _jobBorder.IsVisible = true;
+                PlaceJobBorder(jobX, jobY);
                 borderPlaced = true;
             }
 
             jobX += JobIconSize + JobIconGap;
         }
 
-        if (!borderPlaced) _jobBorder.IsVisible = false;
+        if (!borderPlaced) HideJobBorder();
         for (var i = data.JobIconIds.Count; i < _jobIcons.Count; i++)
             _jobIcons[i].IsVisible = false;
+
+        return jobY + JobIconSize;
+    }
+
+    /// <summary>Position the four green frame bars around the job icon at (<paramref name="iconX" />,
+    /// <paramref name="iconY" />) and show them. The bars straddle the icon edge (<see cref="BorderOutset" />
+    /// outside) so the frame hugs the icon.</summary>
+    private void PlaceJobBorder(float iconX, float iconY)
+    {
+        var ox = iconX - BorderOutset;
+        var oy = iconY - BorderOutset;
+        var span = JobIconSize + BorderOutset * 2f;
+
+        SetBar(_jobBorderBars[0], ox, oy, span, BorderThickness);                          // top
+        SetBar(_jobBorderBars[1], ox, oy + span - BorderThickness, span, BorderThickness); // bottom
+        SetBar(_jobBorderBars[2], ox, oy, BorderThickness, span);                          // left
+        SetBar(_jobBorderBars[3], ox + span - BorderThickness, oy, BorderThickness, span); // right
+    }
+
+    private static void SetBar(NodeBase bar, float x, float y, float w, float h)
+    {
+        bar.Size = new Vector2(w, h);
+        bar.Position = new Vector2(x, y);
+        bar.IsVisible = true;
+    }
+
+    private void HideJobBorder()
+    {
+        foreach (var bar in _jobBorderBars) bar.IsVisible = false;
     }
 
     /// <summary>Drop the job-icon references after the parent (and its children) have been disposed.</summary>
@@ -276,11 +357,20 @@ public sealed class UnifiedHeaderNodes
 
     private IconImageNode GetOrCreateJobIcon(int index)
     {
+        // The pool (built in Build, before the border bars) normally covers every index. A lazily-created
+        // extra would attach after the bars and sit above them, but ResolveJobIcons caps the count at the pool
+        // size, so this fallback is only a safety net and never runs in practice.
         if (index < _jobIcons.Count) return _jobIcons[index];
 
+        var icon = MakeJobIcon();
+        _jobIcons.Add(icon);
+        return icon;
+    }
+
+    private IconImageNode MakeJobIcon()
+    {
         var icon = new IconImageNode { FitTexture = true, IsVisible = false };
         icon.AttachNode(_parent!);
-        _jobIcons.Add(icon);
         return icon;
     }
 

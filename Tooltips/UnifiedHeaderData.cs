@@ -19,6 +19,8 @@ namespace BetterTips.Tooltips;
 /// <param name="Rarity">The item's rarity (1 normal … 7 aetherial) — drives the name color.</param>
 /// <param name="CurrentJobIconId">The player's current-job icon id (62100 + job), 0 if none — gets a green outline.</param>
 /// <param name="CurrentJobEquippable">Whether the player's current job can equip the item (greens the text fallback).</param>
+/// <param name="MeetsLevelRequirement">Whether the player's current job is high enough level to equip the item;
+/// <c>false</c> reddens the Req Level value. Defaults to <c>true</c> when no level is known (logged out / preview).</param>
 public sealed record UnifiedHeaderData(
     string Name,
     uint IconId,
@@ -31,13 +33,23 @@ public sealed record UnifiedHeaderData(
     string ClassJobText,
     byte Rarity,
     uint CurrentJobIconId,
-    bool CurrentJobEquippable)
+    bool CurrentJobEquippable,
+    bool MeetsLevelRequirement)
 {
+    /// <summary>
+    ///     The rendered native name as raw SeString bytes (payloads preserved → the game's glyphs render, e.g.
+    ///     the HQ mark). Set by the live block from node <c>#33</c>; <c>null</c> in the preview, which falls
+    ///     back to the payload-free <see cref="Name" />.
+    /// </summary>
+    public byte[]? NameRaw { get; init; }
+
     /// <summary>Job icon ids start here (62100 + ClassJob row id).</summary>
     private const uint JobIconBase = 62100;
 
-    /// <summary>Above this many equippable jobs the category is treated as "broad" — show no icons.</summary>
-    private const int MaxJobIcons = 10;
+    /// <summary>Above this many equippable jobs the category is treated as "broad" — show the class/job text
+    /// instead of icons. The job row wraps now, so this can be generous while still folding the genuinely broad
+    /// categories (All Classes, Disciples of War or Magic, …) into text.</summary>
+    private const int MaxJobIcons = 16;
 
     /// <summary>Highest ClassJob row id we map to a category column (PCT). Newer jobs are simply skipped.</summary>
     private const uint MaxClassJobId = 42;
@@ -46,7 +58,7 @@ public sealed record UnifiedHeaderData(
     ///     Build the data for the currently hovered item, or <c>null</c> when nothing resolvable is hovered.
     ///     Mirrors <c>GearSetBlockProvider</c>'s HQ-offset handling.
     /// </summary>
-    public static unsafe UnifiedHeaderData? FromHoveredItem(IGameGui gameGui, IDataManager data)
+    public static unsafe UnifiedHeaderData? FromHoveredItem(IGameGui gameGui, IDataManager data, IObjectTable objects)
     {
         var hovered = gameGui.HoveredItem;
         if (hovered == 0) return null;
@@ -63,6 +75,10 @@ public sealed record UnifiedHeaderData(
         var playerState = PlayerState.Instance();
         uint currentJob = playerState is not null ? (uint)playerState->CurrentClassJobId : 0u;
 
+        // The current job's level (0 when logged out) — reddens the Req Level value when too low to equip.
+        var currentLevel = objects.LocalPlayer?.Level ?? 0;
+        var meetsLevel = currentLevel == 0 || item.LevelEquip <= currentLevel;
+
         return new UnifiedHeaderData(
             item.Name.ToString(),
             item.Icon,
@@ -75,7 +91,8 @@ public sealed record UnifiedHeaderData(
             category.Name.ToString(),
             item.Rarity,
             currentJob != 0 ? JobIconBase + currentJob : 0,
-            currentJob != 0 && IsInCategory(category, currentJob));
+            currentJob != 0 && IsInCategory(category, currentJob),
+            meetsLevel);
     }
 
     /// <summary>The big primary stat: weapons show the higher of Physical/Magic damage, armor the higher of
