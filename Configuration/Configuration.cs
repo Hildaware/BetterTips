@@ -64,6 +64,16 @@ public sealed class Configuration : IPluginConfiguration
     public bool ShowGlamour { get; set; } = true;
 
     /// <summary>
+    ///     Append a "Condition" section showing the item's durability and spiritbond (read per-instance from
+    ///     the native gauge's value nodes) plus its sell price, each as an icon with its value on a single
+    ///     row. When shown it replaces the native durability/spiritbond gauge bars (<c>#7</c>), which the
+    ///     relayout hides. Like Gear Sets/Glamour this <em>adds</em> content and honors <see cref="Enabled" />;
+    ///     it only appears when the hovered item has at least one of those values. A missing field in an old
+    ///     config keeps this initializer, so no migration is needed.
+    /// </summary>
+    public bool ShowCondition { get; set; } = true;
+
+    /// <summary>
     ///     The curated <see cref="Enhancement" /> toggles the user has enabled (the editor's "Enhancements"
     ///     tab). Opt-in: anything not listed here is off, so an old config (missing the field) starts empty
     ///     and needs no migration. Serialized by enum value, so <see cref="Enhancement" /> members are

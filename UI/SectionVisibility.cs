@@ -23,6 +23,7 @@ internal static class SectionVisibility
         {
             LayoutSection.GearSets => config.ShowGearSets,
             LayoutSection.Glamour => config.ShowGlamour,
+            LayoutSection.Condition => config.ShowCondition,
             _ => !config.HiddenLayoutSections.Contains(section)
         };
 
@@ -35,6 +36,9 @@ internal static class SectionVisibility
                 return;
             case LayoutSection.Glamour:
                 config.ShowGlamour = show;
+                return;
+            case LayoutSection.Condition:
+                config.ShowCondition = show;
                 return;
         }
 

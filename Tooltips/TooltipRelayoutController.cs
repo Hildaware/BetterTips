@@ -66,6 +66,10 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // order; when it shows, the native description block (#40) is hidden if it's printing dye channels.
     private readonly GlamourBlockProvider _glamour;
 
+    // Owns/draws BetterTips' "Condition" block (durability + spiritbond + sell price). Laid out at the
+    // Condition slot in the order; when it shows, the native durability/spiritbond gauge (#7) is hidden.
+    private readonly ConditionBlockProvider _condition;
+
     // Recomputed on config change; each replaced as a whole reference (atomic) so a callback never sees a
     // half-mutated collection.
     private ItemDetailGroup[] _hiddenGroups = [];
@@ -92,9 +96,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     private float _planBonusesY;
     private bool _planShowGlamour;
     private float _planGlamourY;
-    private bool _planShowGauge;
-    private float _planGaugeX;
-    private float _planGaugeY;
+    private bool _planShowCondition;
+    private float _planConditionY;
     private readonly List<ItemDetailGroup> _planGroups = [];   // named groups to keep hidden
     private readonly List<uint> _planHideIds = [];             // block/sub-node ids to keep hidden (incl. conditional)
     private readonly List<(uint Id, float Y)> _planBlocks = []; // native content blocks → absolute target Y
@@ -113,12 +116,6 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // where the new item's refresh governs natural visibility.
     private readonly HashSet<uint> _appliedHideIds = [];
     private readonly List<ItemDetailGroup> _appliedGroups = [];
-
-    // The durability/spiritbond gauge's (#7) natural position, captured the first time the unified header
-    // moves it, so we can put it back when we stop. The game does NOT reliably reposition the gauge on a plain
-    // update, so without this it stays displaced after the header is toggled off (the corruption we hit).
-    private bool _gaugeMoved;
-    private float _gaugeOrigX, _gaugeOrigY;
 
     // Set when the config changes (Rebuild), consumed on the next PreDraw to recompute against the live
     // tooltip — so a toggle takes effect on the open tooltip immediately, instead of only after the game's
@@ -141,7 +138,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
     public TooltipRelayoutController(IAddonLifecycle addonLifecycle, IGameGui gameGui,
         Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet,
-        UnifiedHeaderBlockProvider unified, UnifiedBonusesBlockProvider bonuses, GlamourBlockProvider glamour)
+        UnifiedHeaderBlockProvider unified, UnifiedBonusesBlockProvider bonuses, GlamourBlockProvider glamour,
+        ConditionBlockProvider condition)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
@@ -151,6 +149,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _unified = unified;
         _bonuses = bonuses;
         _glamour = glamour;
+        _condition = condition;
         Rebuild();
 
         // Compute the plan when the game updates the tooltip's content...
@@ -273,14 +272,15 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         var root = addon->RootNode;
         if (!_config.Enabled || root is null)
         {
-            // Put the tooltip back to its natural state (re-show what we hid, restore the gauge) before going
-            // dormant — but only when the root is valid; a null root means the addon is tearing down.
+            // Put the tooltip back to its natural state (re-show what we hid) before going dormant — but only
+            // when the root is valid; a null root means the addon is tearing down.
             if (root is not null) RestorePrevious(addon);
             Discard();
             _gearSet.Hide();
             _unified.Hide();
             _bonuses.Hide();
             _glamour.Hide();
+            _condition.Hide();
             return;
         }
 
@@ -296,11 +296,9 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _transientSkips = 0;
             // New item: its own refresh governs natural visibility, so drop our applied-hide tracking WITHOUT
             // re-showing (re-showing could fight the game's per-item hiding — e.g. an empty Damage block on a
-            // non-gear item). The gauge IS restored, since the game doesn't reliably reposition it on a plain
-            // update.
+            // non-gear item).
             _appliedHideIds.Clear();
             _appliedGroups.Clear();
-            RestoreGauge(addon);
         }
 
         // Mid-refresh guard. The game periodically blanks every section's text for a frame or two while it
@@ -324,23 +322,26 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planShowUnified = false;
         _planShowBonuses = false;
         _planShowGlamour = false;
-        _planShowGauge = false;
+        _planShowCondition = false;
         _planControlY = float.NaN;
 
         // Build + measure our added blocks first; they leave themselves HIDDEN, so the scans below ignore them.
-        // The bonuses block scrapes the native materia block (#93) and the glamour block scrapes the
-        // description block (#40), so both must measure BEFORE the hides below.
+        // The bonuses block scrapes the native materia block (#93), the glamour block scrapes the description
+        // block (#40), and the condition block scrapes the durability/spiritbond gauge (#7), so all must
+        // measure BEFORE the hides below.
         var gearWants = _gearSet.TryMeasure(addon, root->Width, out var gearHeight);
         var unifiedWants = _unified.TryMeasure(addon, root->Width, out var unifiedHeight);
         var bonusesWants = _bonuses.TryMeasure(addon, root->Width, out var bonusesHeight);
         var glamourWants = _glamour.TryMeasure(addon, root->Width, out var glamourHeight);
+        var conditionWants = _condition.TryMeasure(addon, root->Width, out var conditionHeight);
 
         var hasHides = _hiddenGroups.Length > 0 || _hiddenBlocks.Length > 0 ||
                        _hiddenNodeIds.Length > 0 || _conditionalBlocks.Length > 0;
 
         // Do no harm when idle: nothing configured to change → leave the game's layout pristine (no plan).
         // Restore anything a prior (now-removed) customization left applied to this same item first.
-        if (!hasHides && !_reorderActive && !gearWants && !unifiedWants && !bonusesWants && !glamourWants)
+        if (!hasHides && !_reorderActive && !gearWants && !unifiedWants && !bonusesWants && !glamourWants &&
+            !conditionWants)
         {
             RestorePrevious(addon);
             _prevIncluded.Clear();
@@ -373,27 +374,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _planUnifiedY = blockTop;
             anchorTop = headerY + blockTop + unifiedHeight;
 
-            // The durability/spiritbond gauge (#7) otherwise floats at the old header top — move it directly
-            // left of our icon (align its bars' top, at the gauge's internal y=13, with the icon's top).
-            const float gaugeX = 10f; // nudge the bars right so they sit just left of the icon, off the edge
-            var gaugeY = blockTop + UnifiedHeaderNodes.IconOffsetY - 18f;
-            var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
-            if (gauge is not null && (gauge->NodeFlags & NodeFlags.Visible) != 0)
-            {
-                // Capture the natural position once (before the first move) so we can restore it later.
-                if (!_gaugeMoved)
-                {
-                    _gaugeOrigX = gauge->X;
-                    _gaugeOrigY = gauge->Y;
-                    _gaugeMoved = true;
-                }
-
-                gauge->SetXFloat(gaugeX);
-                gauge->SetYFloat(gaugeY);
-                _planShowGauge = true;
-                _planGaugeX = gaugeX;
-                _planGaugeY = gaugeY;
-            }
+            // The durability/spiritbond gauge bars (#7) are hidden below — the redesigned header has no place
+            // for them and the Condition section is their new home — so there's nothing to position here.
         }
         else
         {
@@ -489,6 +471,16 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _planHideIds.Add(TooltipLayout.DescriptionBlockId);
         }
 
+        // Hide the native durability/spiritbond gauge bars (#7) whenever the Condition section (their new home,
+        // already scraped above for its values) or the unified header (no place for them in its redesign) is
+        // active. We only ever HIDE the gauge now — never move it. RestorePrevious re-shows it when both go off.
+        if (conditionWants || unifiedWants)
+        {
+            var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
+            if (gauge is not null) gauge->ToggleVisibility(false);
+            _planHideIds.Add(TooltipLayout.GaugeBlockId);
+        }
+
         // --- Lay out the ordered, effective-visible content absolutely from the header anchor. ---
         var y = anchorTop;
         foreach (var id in _sectionOrder)
@@ -510,6 +502,14 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                     _planShowGlamour = true;
                     _planGlamourY = y;
                     y += glamourHeight;
+                }
+                else if (id == LayoutSection.Condition && conditionWants)
+                {
+                    _condition.PlaceAt(y);
+                    _condition.Show();
+                    _planShowCondition = true;
+                    _planConditionY = y;
+                    y += conditionHeight;
                 }
 
                 continue;
@@ -592,19 +592,18 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planShowUnified = false;
         _planShowBonuses = false;
         _planShowGlamour = false;
-        _planShowGauge = false;
+        _planShowCondition = false;
         _planControlY = float.NaN;
         _prevIncluded.Clear();
         _appliedHideIds.Clear();
         _appliedGroups.Clear();
-        _gaugeMoved = false;
     }
 
     /// <summary>
-    ///     Re-show every node/group we hid last pass and put the gauge back to its natural position, then clear
-    ///     the applied-modification tracking. Called at the start of a same-item recompute (so the pass starts
-    ///     from the game's natural layout) and on disable. Guarded — every native access is null/visibility
-    ///     checked, so a bad pointer can't throw out of the framework callback.
+    ///     Re-show every node/group we hid last pass, then clear the applied-modification tracking. Called at
+    ///     the start of a same-item recompute (so the pass starts from the game's natural layout) and on
+    ///     disable. Guarded — every native access is null/visibility checked, so a bad pointer can't throw out
+    ///     of the framework callback.
     /// </summary>
     private void RestorePrevious(AddonItemDetail* addon)
     {
@@ -623,23 +622,6 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                 node->ToggleVisibility(true);
         }
         _appliedGroups.Clear();
-
-        RestoreGauge(addon);
-    }
-
-    /// <summary>Restore the durability/spiritbond gauge (#7) to its captured natural position, if we moved it.</summary>
-    private void RestoreGauge(AddonItemDetail* addon)
-    {
-        if (!_gaugeMoved) return;
-
-        var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
-        if (gauge is not null)
-        {
-            if (Math.Abs(gauge->X - _gaugeOrigX) > 0.5f) gauge->SetXFloat(_gaugeOrigX);
-            if (Math.Abs(gauge->Y - _gaugeOrigY) > 0.5f) gauge->SetYFloat(_gaugeOrigY);
-        }
-
-        _gaugeMoved = false;
     }
 
     /// <summary>
@@ -739,16 +721,19 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _glamour.Hide();
         }
 
-        // Durability/spiritbond gauge re-position (only while the unified header owns the top).
-        if (_planShowGauge)
+        // Condition block.
+        if (_planShowCondition)
         {
-            var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
-            if (gauge is not null)
-            {
-                if (Math.Abs(gauge->X - _planGaugeX) > 0.5f) gauge->SetXFloat(_planGaugeX);
-                if (Math.Abs(gauge->Y - _planGaugeY) > 0.5f) gauge->SetYFloat(_planGaugeY);
-            }
+            _condition.PlaceAt(_planConditionY);
+            _condition.Show();
         }
+        else
+        {
+            _condition.Hide();
+        }
+
+        // The durability/spiritbond gauge (#7) is only ever hidden now (when the Condition section or unified
+        // header is active), which the _planHideIds re-hide loop above already enforces — nothing to position.
 
         // Control-hints row.
         if (!float.IsNaN(_planControlY))

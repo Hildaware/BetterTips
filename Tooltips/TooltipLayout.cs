@@ -27,7 +27,13 @@ public enum LayoutSection
 
     // BetterTips' own "Glamour" section (no native block — positioned specially, like GearSets): the
     // glamoured-appearance name + applied dye channels. Append-only.
-    Glamour
+    Glamour,
+
+    // BetterTips' own "Condition" section (no native block — positioned specially, like GearSets/Glamour): a
+    // single horizontal row of durability + spiritbond (per-instance, read from the gauge's own value nodes)
+    // + sell price (Lumina), each an icon with its value. Replaces the native durability/spiritbond gauge
+    // bars (#7), which the relayout hides when this section shows. Append-only.
+    Condition
 }
 
 /// <summary>Display label + the block node id(s) a <see cref="LayoutSection" /> moves as a unit.</summary>
@@ -89,8 +95,9 @@ public static class TooltipLayout
     /// placed just below it.</summary>
     public const uint BindingLineBlockId = 20;
 
-    /// <summary>The durability/spiritbond gauge block (<c>#7</c>, two vertical bars). The Unified item header
-    /// re-positions it to sit directly left of its icon (it's otherwise left floating at the old header top).</summary>
+    /// <summary>The durability/spiritbond gauge block (<c>#7</c>, two vertical bars). The relayout <b>hides</b>
+    /// it when the "Condition" section (its redesigned replacement) or the unified item header is active — it's
+    /// never moved.</summary>
     public const uint GaugeBlockId = 7;
 
     public static readonly IReadOnlyList<LayoutSectionInfo> Sections =
@@ -108,6 +115,9 @@ public static class TooltipLayout
         new(LayoutSection.Materia,            "Materia",                     [93]),
         new(LayoutSection.Effects,            "Effects",                     [49]),
         new(LayoutSection.CraftingRepairs,    "Crafting & Repairs",          [68]),
+        // No block ids — BetterTips' own Condition row (durability + spiritbond + sell price), built by
+        // ConditionBlockProvider and laid out by the relayout at this slot. Replaces the native gauge bars (#7).
+        new(LayoutSection.Condition,          "Condition",                   []),
         // Requirements (block #53) is intentionally omitted: equip requirements already live in the Item
         // Level / Class block, and the native #53 "Requirements" block (Base Item / Catalyst) is a niche
         // crafting-material line, not a real reorderable section for the user. The enum member stays for
@@ -123,7 +133,8 @@ public static class TooltipLayout
     ];
 
     /// <summary>Our own non-native sections (positioned by their controllers, not the reorder pass).</summary>
-    public static bool IsCustom(LayoutSection id) => id is LayoutSection.GearSets or LayoutSection.Glamour;
+    public static bool IsCustom(LayoutSection id)
+        => id is LayoutSection.GearSets or LayoutSection.Glamour or LayoutSection.Condition;
 
     /// <summary>The default top-to-bottom order (best-effort match for the game's natural order).</summary>
     public static readonly LayoutSection[] DefaultOrder = Sections.Select(s => s.Id).ToArray();
