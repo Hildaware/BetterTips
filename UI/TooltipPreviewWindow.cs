@@ -99,6 +99,9 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     private UnifiedHeaderNodes? _unifiedNodes;
     private ResNode? _bonusesBlock;
     private UnifiedBonusesNodes? _bonusesNodes;
+    // The Enhanced-only Description card (headerless, centered) — separate from the shared left-aligned
+    // Description card in _cards, which modifier mode keeps using.
+    private TooltipContentBlock? _descCard;
     private readonly Dictionary<LayoutSection, TooltipContentBlock> _cards = new();
 
     // The current absolute slot Y of each visible card. A card whose live Y has drifted from its slot is the
@@ -146,6 +149,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         _bonusesNodes?.Reset();
         _bonusesNodes = null;
         _bonusesBlock = null;
+        _descCard = null;
     }
 
     protected override void OnDraw(AtkUnitBase* addon)
@@ -239,6 +243,9 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         // The unified bonuses/materia block (built hidden; shown at the Bonuses slot when its enhancement is on).
         BuildBonusesBlock(cardWidth);
 
+        // The Enhanced-only Description card (built hidden; shown above Glamour in the Enhanced layout).
+        BuildEnhancedDescription(cardWidth);
+
         _controlHints = new TextNode
         {
             String = "Equip      Cast      Discard",
@@ -261,8 +268,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         or LayoutSection.Requirements
         or LayoutSection.Effects
         or LayoutSection.GearSets
-        or LayoutSection.Glamour
-        or LayoutSection.Condition;
+        or LayoutSection.Glamour;
 
     private TooltipContentBlock BuildCard(LayoutSection section, float width)
     {
@@ -422,7 +428,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     private float BuildCondition(TooltipContentBlock card, float width)
     {
         var entries = _sample.ConditionSample.Entries();
-        var y = card.BodyTop;
+        var y = card.BodyTop + ConditionBlockProvider.TopPad;
         var count = entries.Count;
         var edge = count == 2 && width - 2f * ConditionBlockProvider.TwoEntryEdgePad >= 80f
             ? ConditionBlockProvider.TwoEntryEdgePad
@@ -470,7 +476,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
                 y + (ConditionBlockProvider.RowHeight - ConditionBlockProvider.BodyFontSize) / 2f);
         }
 
-        return ConditionBlockProvider.RowHeight;
+        return ConditionBlockProvider.TopPad + ConditionBlockProvider.RowHeight;
     }
 
     /// <summary>Crafting & Repairs: the small condition gear icon at the left, then the tan/white rows.</summary>
@@ -530,6 +536,41 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
 
         var height = _bonusesNodes.Update(_sample.UnifiedBonuses, width);
         _bonusesBlock.Size = new Vector2(width, height);
+    }
+
+    /// <summary>
+    ///     The Enhanced-only "Description" card — a simple, headerless, <b>center-aligned</b> render of the
+    ///     sample lore, mirroring the live <see cref="DescriptionBlockProvider" />. Built once and hidden until
+    ///     Enhanced mode shows it just above Glamour. Kept separate from the shared (left-aligned) Description
+    ///     card so modifier mode still mirrors the native left-aligned description.
+    /// </summary>
+    private void BuildEnhancedDescription(float width)
+    {
+        _descCard = new TooltipContentBlock { IsVisible = false };
+        _descCard.SetHeaderless();
+
+        var rows = _sample.BodyRows(LayoutSection.Description);
+        var shown = Math.Min(rows.Length, MaxBodyLines + 2);
+        var y = _descCard.BodyTop;
+        for (var i = 0; i < shown; i++)
+        {
+            var line = new TextNode
+            {
+                String = rows[i].Value,
+                FontType = FontType.Axis,
+                FontSize = BodyFontSize,
+                AlignmentType = AlignmentType.Center, // centered within the full card width
+                TextColor = LightGreyColor,
+                TextOutlineColor = OutlineColor,
+                Size = new Vector2(width, BodyLineHeight),
+                Position = new Vector2(0f, y)
+            };
+            line.AttachNode(_descCard);
+            y += BodyLineHeight;
+        }
+
+        _descCard.Resize(width, y - _descCard.BodyTop + BodyBottomPad);
+        _descCard.AttachNode(_previewRoot);
     }
 
     private static void AddBodyText(NodeBase parent, string text, Vector4 color, float x, float y,
@@ -595,63 +636,51 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     {
         if (_previewRoot is null) return;
 
-        var unified = EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedItemHeader);
-        var bonusesEnh = EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria);
-        if (!bonusesEnh && _bonusesBlock is not null) _bonusesBlock.IsVisible = false;
+        // Enhanced mode is a fixed order — disable card dragging entirely (not just snap-back). Guarded on the
+        // current value so the per-frame drag refresh in modifier mode doesn't re-register the move listener.
+        var movable = !_config.EnhancedMode;
+        foreach (var card in _cards.Values)
+            if (card.EnableMoving != movable)
+                card.EnableMoving = movable;
 
-        // Header region: either the native icon/name/category, or the merged unified-header block at the top
-        // (which folds in the icon/name, Item Level, and Damage/Defense — those cards are skipped below).
-        float top;
-        if (unified && _unifiedHeader is not null)
+        // The Enhanced tooltip is a fixed curated layout — it ignores the structure config and isn't
+        // draggable, so it renders on its own path.
+        if (_config.EnhancedMode)
         {
-            if (_iconNode is not null) _iconNode.IsVisible = false;
-            if (_nameNode is not null) _nameNode.IsVisible = false;
-            if (_categoryNode is not null) _categoryNode.IsVisible = false;
-
-            _unifiedHeader.IsVisible = true;
-            _unifiedHeader.Position = new Vector2(PanelPad, HeaderTopPad);
-            top = HeaderTopPad + _unifiedHeader.Height + HeaderGap;
-        }
-        else
-        {
-            if (_unifiedHeader is not null) _unifiedHeader.IsVisible = false;
-
-            // Header: icon top-left; the name is vertically centered against the icon to its right; the
-            // category ("Gladiator's Arm") sits below the icon, left-aligned with it (no item level here).
-            var hasIcon = _iconNode is not null;
-            if (_nameNode is not null)
-            {
-                var nameX = hasIcon ? HeaderTextInset : PanelPad;
-                var nameY = hasIcon ? HeaderTopPad + (IconSize - (float)NameFontSize - 4f) / 2f : HeaderTopPad;
-                _nameNode.Position = new Vector2(nameX, nameY);
-                _nameNode.IsVisible = true;
-            }
-
-            var iconBottom = HeaderTopPad + (hasIcon ? IconSize : NameHeight);
-            var showCategory = !_config.HiddenSections.Contains(TooltipSection.ItemCategory);
-            if (_categoryNode is not null)
-            {
-                _categoryNode.IsVisible = showCategory;
-                if (showCategory)
-                    _categoryNode.Position = new Vector2(PanelPad, iconBottom + 2f);
-            }
-
-            top = (showCategory ? iconBottom + 2f + CategoryHeight : iconBottom) + HeaderGap;
+            RefreshEnhancedPreview();
+            return;
         }
 
-        var y = top;
+        // Modifier mode: the unified header / bonuses blocks and the Enhanced-only Description card ship only
+        // with the Enhanced tooltip, so they're never shown here — every native section appears as its own
+        // (draggable) card.
+        if (_unifiedHeader is not null) _unifiedHeader.IsVisible = false;
+        if (_bonusesBlock is not null) _bonusesBlock.IsVisible = false;
+        if (_descCard is not null) _descCard.IsVisible = false;
+
+        // Header: icon top-left; the name is vertically centered against the icon to its right; the
+        // category ("Gladiator's Arm") sits below the icon, left-aligned with it (no item level here).
+        var hasIcon = _iconNode is not null;
+        if (_nameNode is not null)
+        {
+            var nameX = hasIcon ? HeaderTextInset : PanelPad;
+            var nameY = hasIcon ? HeaderTopPad + (IconSize - (float)NameFontSize - 4f) / 2f : HeaderTopPad;
+            _nameNode.Position = new Vector2(nameX, nameY);
+            _nameNode.IsVisible = true;
+        }
+
+        var iconBottom = HeaderTopPad + (hasIcon ? IconSize : NameHeight);
+        var showCategory = !_config.HiddenSections.Contains(TooltipSection.ItemCategory);
+        if (_categoryNode is not null)
+        {
+            _categoryNode.IsVisible = showCategory;
+            if (showCategory)
+                _categoryNode.Position = new Vector2(PanelPad, iconBottom + 2f);
+        }
+
+        var y = (showCategory ? iconBottom + 2f + CategoryHeight : iconBottom) + HeaderGap;
         foreach (var section in _config.SectionOrder)
         {
-            // The unified bonuses/materia block takes the Bonuses slot in the order (the Materia slot collapses,
-            // since both cards are folded in). It isn't a draggable card — it tracks the Bonuses order position.
-            if (bonusesEnh && section == LayoutSection.AttributeBonuses && _bonusesBlock is not null)
-            {
-                _bonusesBlock.IsVisible = true;
-                _bonusesBlock.Position = new Vector2(PanelPad, y);
-                y += _bonusesBlock.Height + CardGap;
-                continue;
-            }
-
             if (!_cards.TryGetValue(section, out var card)) continue;
 
             if (IsPreviewVisible(section))
@@ -679,13 +708,84 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     }
 
     /// <summary>
+    ///     The Enhanced tooltip preview: a fixed curated layout (not draggable). The unified item header
+    ///     anchors the top, then the unified bonuses &amp; materia block and the glamour / gear-set / condition
+    ///     cards stack in <see cref="TooltipLayout.EnhancedBodyOrder" />; every other card and the native
+    ///     icon/name/category are hidden. Mirrors what <c>TooltipRelayoutController</c> builds in Enhanced mode.
+    /// </summary>
+    private void RefreshEnhancedPreview()
+    {
+        // Native header pieces off; the unified header replaces them at the top.
+        if (_iconNode is not null) _iconNode.IsVisible = false;
+        if (_nameNode is not null) _nameNode.IsVisible = false;
+        if (_categoryNode is not null) _categoryNode.IsVisible = false;
+
+        // Hide every draggable card and drop the drag slots; the curated order re-shows only its own sections.
+        foreach (var card in _cards.Values) card.IsVisible = false;
+        _slotY.Clear();
+
+        float y;
+        if (_unifiedHeader is not null)
+        {
+            _unifiedHeader.IsVisible = true;
+            _unifiedHeader.Position = new Vector2(PanelPad, HeaderTopPad);
+            y = HeaderTopPad + _unifiedHeader.Height + HeaderGap;
+        }
+        else
+        {
+            y = HeaderTopPad;
+        }
+
+        foreach (var section in TooltipLayout.EnhancedBodyOrder)
+        {
+            // The unified bonuses & materia block takes the Bonuses slot (it isn't a draggable card).
+            if (section == LayoutSection.AttributeBonuses)
+            {
+                if (_bonusesBlock is not null)
+                {
+                    _bonusesBlock.IsVisible = true;
+                    _bonusesBlock.Position = new Vector2(PanelPad, y);
+                    y += _bonusesBlock.Height + CardGap;
+                }
+                continue;
+            }
+
+            // The Enhanced-only Description section is its own centered, headerless card.
+            if (section == LayoutSection.EnhancedDescription)
+            {
+                if (_descCard is not null)
+                {
+                    _descCard.IsVisible = true;
+                    _descCard.Position = new Vector2(PanelPad, y);
+                    y += _descCard.Height + CardGap;
+                }
+                continue;
+            }
+
+            if (_cards.TryGetValue(section, out var card))
+            {
+                card.IsVisible = true;
+                card.Position = new Vector2(PanelPad, y);
+                y += card.Height + CardGap;
+            }
+        }
+
+        if (_controlHints is not null)
+        {
+            _controlHints.IsVisible = true;
+            _controlHints.Position = new Vector2(PanelPad, y + ControlGap);
+        }
+    }
+
+    /// <summary>
     ///     If a card has been dragged off its slot, recompute where it should insert among the others and
     ///     reflow them to open a gap there (so nothing overlaps). The dragged card is left floating under the
     ///     cursor until release.
     /// </summary>
     private void ReflowDuringDrag()
     {
-        if (_previewRoot is null || _slotY.Count == 0) return;
+        // The Enhanced tooltip is a fixed order — no drag-reorder (and _slotY is cleared on its refresh anyway).
+        if (_previewRoot is null || _config.EnhancedMode || _slotY.Count == 0) return;
 
         LayoutSection? dragging = null;
         foreach (var (section, card) in _cards)
@@ -719,6 +819,13 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     {
         try
         {
+            // Enhanced mode has a fixed order — snap the card back, persist nothing.
+            if (_config.EnhancedMode)
+            {
+                RefreshPreview();
+                return;
+            }
+
             var center = node.Y + node.Height / 2f;
             var others = VisibleOrder().Where(s => s != dragged).ToList();
             var index = DropIndex(others, center);
@@ -735,22 +842,11 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         }
     }
 
-    /// <summary>
-    ///     Whether a section's card shows in the preview right now: it must be enabled in the catalog <b>and</b>
-    ///     not folded into the unified header. The "Unified item header" enhancement absorbs the Item Level and
-    ///     Damage/Defense sections, so while it's on those don't appear as — or reorder like — separate cards.
-    /// </summary>
+    /// <summary>Whether a section's card shows in the modifier preview right now (the Enhanced tooltip renders
+    /// on its own fixed path, so this is only consulted in modifier mode): simply whether it's kept in the
+    /// catalog.</summary>
     private bool IsPreviewVisible(LayoutSection section)
-    {
-        if (EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedItemHeader)
-            && section is LayoutSection.DamageDefense or LayoutSection.ItemLevelClassJob)
-            return false;
-        // The unified bonuses/materia enhancement absorbs the Bonuses and Materia sections into its own block.
-        if (EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria)
-            && section is LayoutSection.AttributeBonuses or LayoutSection.Materia)
-            return false;
-        return SectionVisibility.IsShown(_config, section);
-    }
+        => SectionVisibility.IsShown(_config, section);
 
     private List<LayoutSection> VisibleOrder()
     {

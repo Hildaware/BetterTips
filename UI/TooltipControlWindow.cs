@@ -8,19 +8,19 @@ using Dalamud.Plugin.Services;
 namespace BetterTips.UI;
 
 /// <summary>
-///     The native control window. The master <c>Enable</c> switch and the preview toggle sit above a
-///     <see cref="TabBarNode" /> with two tabs: <b>Structure</b> (the show/hide catalog + the detail hides;
-///     reorder happens by dragging the preview) and <b>Enhancements</b> (curated "more streamlined / cleaner"
-///     toggles). Each tab's controls live in their own container node, swapped by the tab bar. Opening this
-///     window opens the <see cref="TooltipPreviewWindow" /> alongside it; toggling any control writes the
-///     shared <see cref="Configuration.Configuration" />, fires <c>onChanged</c> (save + relayout rebuild),
-///     and refreshes the preview so the mock tooltip updates live.
+///     The native control window — a single flat layout (no tabs). The app-level switches sit at the top
+///     (Enable, "Show tooltip preview", and the <b>"Enhanced tooltip"</b> switch = <see cref="Configuration.Configuration.EnhancedMode" />),
+///     then a <b>Structure</b> sub-group: the modifier's show/hide catalog (a <see cref="CheckboxNode" /> per
+///     movable block) plus the finer detail hides. While the Enhanced switch is on its curated layout
+///     disregards the structure config, so the Structure sub-group is <b>locked</b> (its checkboxes dimmed +
+///     click-suppressed). Opening this window opens the <see cref="TooltipPreviewWindow" /> alongside it;
+///     toggling any control writes the shared <see cref="Configuration.Configuration" />, fires
+///     <c>onChanged</c> (save + relayout rebuild), and refreshes the preview so the mock tooltip updates live.
 /// </summary>
 public sealed unsafe class TooltipControlWindow : NativeAddon
 {
     private const float RowHeight = 26f;
     private const float CheckHeight = 24f;
-    private const float TabBarHeight = 28f;
 
     private readonly Configuration.Configuration _config;
     private readonly Action _onChanged;
@@ -28,14 +28,11 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
     private readonly IPluginLog _log;
 
     private CheckboxNode? _showPreview;
-    private ResNode? _structureTab;
-    private ResNode? _enhancementsTab;
-    private TabBarNode? _tabBar;
+    private CheckboxNode? _enhancedCheck;
 
-    // The Structure-tab checkboxes for the two sections the "Unified bonuses & materia" enhancement folds in;
-    // kept so we can lock them (forced checked + dimmed) while that enhancement is on.
-    private CheckboxNode? _bonusesCheck;
-    private CheckboxNode? _materiaCheck;
+    // Every Structure-group checkbox, kept so we can lock them (dimmed + click-suppressed) while the Enhanced
+    // tooltip is on — its curated layout disregards the structure config, so editing it would be misleading.
+    private readonly List<CheckboxNode> _structureChecks = [];
     private bool _suppressToggle;
     private static readonly Vector4 LockedLabelColor = new(0.5f, 0.5f, 0.5f, 1f);
     private static readonly Vector4 NormalLabelColor = ColorHelper.GetColor(8);
@@ -58,16 +55,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             var y = ContentStartPosition.Y;
 
             BuildGlobalToggles(x, ref y, width);
-            BuildTabBar(x, ref y, width);
-
-            // Both tabs' controls live in their own container, laid out from the same top; the tab bar
-            // toggles which is visible. Containers sit at the window origin so child positions stay absolute.
-            var contentTop = y;
-            _structureTab = AddTabContainer(width, visible: true);
-            _enhancementsTab = AddTabContainer(width, visible: false);
-
-            BuildStructureTab(_structureTab, x, contentTop, width);
-            BuildEnhancementsTab(_enhancementsTab, x, contentTop, width);
+            BuildStructureGroup(x, ref y, width);
 
             // The preview opens alongside the controls (and closes with them, in OnFinalize).
             _preview.Open();
@@ -82,14 +70,11 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
     {
         _preview.Close();
         _showPreview = null;
-        _structureTab = null;
-        _enhancementsTab = null;
-        _tabBar = null;
-        _bonusesCheck = null;
-        _materiaCheck = null;
+        _enhancedCheck = null;
+        _structureChecks.Clear();
     }
 
-    /// <summary>App-level toggles, above the tabs and always visible.</summary>
+    /// <summary>The app-level switches at the top of the window.</summary>
     private void BuildGlobalToggles(float x, ref float y, float width)
     {
         var size = new Vector2(width, CheckHeight);
@@ -125,52 +110,43 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             else _preview.Close();
         };
         _showPreview.AttachNode(this);
-        y += RowHeight + 6f;
-    }
+        y += RowHeight;
 
-    private void BuildTabBar(float x, ref float y, float width)
-    {
-        _tabBar = new TabBarNode
+        // The product selector: Enhanced (curated, all-or-nothing) vs the modifier's Structure sub-group.
+        // While on, the structure config is disregarded and the sub-group is locked.
+        _enhancedCheck = new CheckboxNode
         {
+            String = "Enhanced tooltip",
+            IsChecked = _config.EnhancedMode,
             Position = new Vector2(x, y),
-            Size = new Vector2(width, TabBarHeight)
+            Size = size
         };
-        // TabBarNode auto-selects the first tab but doesn't fire its callback, so the containers set their
-        // own initial visibility (Structure visible, Enhancements hidden) at creation.
-        _tabBar.AddTab("Structure", () => ShowTab(structure: true));
-        _tabBar.AddTab("Enhancements", () => ShowTab(structure: false));
-        _tabBar.AttachNode(this);
-        y += TabBarHeight + 10f;
-    }
-
-    private ResNode AddTabContainer(float width, bool visible)
-    {
-        // A plain Res node doesn't clip, so children keep their absolute positions; we only toggle its
-        // visibility to switch tabs.
-        var container = new ResNode
+        _enhancedCheck.DisableAutoResize = true;
+        _enhancedCheck.OnClick = isChecked =>
         {
-            Position = Vector2.Zero,
-            Size = new Vector2(width, ContentSize.Y),
-            IsVisible = visible
+            _config.EnhancedMode = isChecked;
+            _enhancedCheck.IsChecked = isChecked;
+            _onChanged();
+            ApplyStructureLock();
+            _preview.Refresh();
         };
-        container.AttachNode(this);
-        return container;
+        _enhancedCheck.AttachNode(this);
+        y += RowHeight + 8f;
     }
 
-    private void ShowTab(bool structure)
+    /// <summary>The modifier's show/hide catalog (movable blocks) + the finer detail hides, as a sub-group of
+    /// the main window. Locked (dimmed + click-suppressed) while the Enhanced tooltip is on.</summary>
+    private void BuildStructureGroup(float x, ref float y, float width)
     {
-        if (_structureTab is not null) _structureTab.IsVisible = structure;
-        if (_enhancementsTab is not null) _enhancementsTab.IsVisible = !structure;
-    }
-
-    /// <summary>The show/hide catalog (movable blocks) + the finer detail hides.</summary>
-    private void BuildStructureTab(ResNode parent, float x, float yStart, float width)
-    {
-        var y = yStart;
+        _structureChecks.Clear();
         var size = new Vector2(width, CheckHeight);
 
-        AddHint(parent, "* Checked sections are kept in the tooltip; uncheck one to remove it.", x, ref y, width);
-        AddLabel(parent, "Sections", x, ref y, width);
+        AddLabel("Structure", x, ref y, width);
+        AddHint("Add / remove / reorder the base tooltip (reorder by dragging in the preview).", x, ref y, width);
+        AddHint("Disabled while the Enhanced tooltip is on.", x, ref y, width);
+        y += 4f;
+
+        AddLabel("Sections", x, ref y, width);
         foreach (var info in TooltipLayout.Sections)
         {
             var section = info.Id;
@@ -185,11 +161,11 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             check.OnClick = isChecked =>
             {
                 if (_suppressToggle) return;
-                // Bonuses & Materia are folded into the unified bonuses/materia enhancement while it's on, so
-                // they can't be hidden from here — snap the checkbox back to checked.
-                if (IsFoldedByBonusesEnhancement(section))
+                // The Enhanced tooltip disregards the structure config, so it can't be edited while on —
+                // snap the checkbox back to the stored value.
+                if (_config.EnhancedMode)
                 {
-                    SetCheckedSilent(check, true);
+                    SetCheckedSilent(check, SectionVisibility.IsShown(_config, section));
                     return;
                 }
 
@@ -198,17 +174,13 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
                 _onChanged();
                 _preview.Refresh();
             };
-            check.AttachNode(parent);
-            if (section == LayoutSection.AttributeBonuses) _bonusesCheck = check;
-            else if (section == LayoutSection.Materia) _materiaCheck = check;
+            check.AttachNode(this);
+            _structureChecks.Add(check);
             y += RowHeight;
         }
 
-        // Reflect the enhancement's lock on the two folded sections from the moment the window opens.
-        ApplyBonusesMateriaLock();
-
         y += 8f;
-        AddLabel(parent, "Details", x, ref y, width);
+        AddLabel("Details", x, ref y, width);
         foreach (var ts in SectionVisibility.DetailSections)
         {
             var info = FindDetail(ts);
@@ -225,74 +197,35 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             check.DisableAutoResize = true;
             check.OnClick = isChecked =>
             {
+                if (_suppressToggle) return;
+                if (_config.EnhancedMode)
+                {
+                    SetCheckedSilent(check, !_config.HiddenSections.Contains(detail));
+                    return;
+                }
+
                 if (isChecked) _config.HiddenSections.Remove(detail);
                 else _config.HiddenSections.Add(detail);
                 check.IsChecked = isChecked;
                 _onChanged();
                 _preview.Refresh();
             };
-            check.AttachNode(parent);
+            check.AttachNode(this);
+            _structureChecks.Add(check);
             y += RowHeight;
         }
+
+        // Reflect the lock from the moment the window opens.
+        ApplyStructureLock();
     }
 
-    /// <summary>The curated enhancement toggles (empty until the first one ships — shows a placeholder).</summary>
-    private void BuildEnhancementsTab(ResNode parent, float x, float yStart, float width)
+    /// <summary>Dim + click-suppress (via the per-handler <see cref="Configuration.Configuration.EnhancedMode" />
+    /// guard) the Structure-group checkboxes when the Enhanced tooltip is on; restore them when it's off.</summary>
+    private void ApplyStructureLock()
     {
-        var y = yStart;
-        var size = new Vector2(width, CheckHeight);
-
-        if (EnhancementCatalog.All.Length == 0)
-        {
-            AddLabel(parent, "No enhancements available yet.", x, ref y, width);
-            return;
-        }
-
-        foreach (var info in EnhancementCatalog.All)
-        {
-            var enhancement = info.Id;
-            var check = new CheckboxNode
-            {
-                String = info.Label,
-                IsChecked = EnhancementCatalog.IsEnabled(_config, enhancement),
-                Position = new Vector2(x, y),
-                Size = size
-            };
-            check.DisableAutoResize = true;
-            check.OnClick = isChecked =>
-            {
-                EnhancementCatalog.SetEnabled(_config, enhancement, isChecked);
-                check.IsChecked = isChecked;
-                _onChanged();
-                // The unified bonuses/materia enhancement locks the Bonuses & Materia Structure-tab toggles.
-                if (enhancement == Enhancement.UnifiedBonusesMateria) ApplyBonusesMateriaLock();
-                _preview.Refresh();
-            };
-            check.AttachNode(parent);
-            y += RowHeight;
-        }
-    }
-
-    /// <summary>Whether <paramref name="section" /> is currently folded into (and so un-hideable by) the
-    /// "Unified bonuses &amp; materia" enhancement.</summary>
-    private bool IsFoldedByBonusesEnhancement(LayoutSection section)
-        => section is LayoutSection.AttributeBonuses or LayoutSection.Materia
-           && EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria);
-
-    /// <summary>Lock (force checked + dim) or restore the Bonuses &amp; Materia Structure-tab checkboxes to
-    /// match the enhancement's current state.</summary>
-    private void ApplyBonusesMateriaLock()
-    {
-        LockCheck(_bonusesCheck, LayoutSection.AttributeBonuses);
-        LockCheck(_materiaCheck, LayoutSection.Materia);
-    }
-
-    private void LockCheck(CheckboxNode? check, LayoutSection section)
-    {
-        if (check is null) return;
-        var locked = EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria);
-        SetCheckedSilent(check, locked || SectionVisibility.IsShown(_config, section));
-        check.Label.TextColor = locked ? LockedLabelColor : NormalLabelColor;
+        var color = _config.EnhancedMode ? LockedLabelColor : NormalLabelColor;
+        foreach (var check in _structureChecks)
+            check.Label.TextColor = color;
     }
 
     /// <summary>Set a checkbox's state without firing its <c>OnClick</c> (avoids the snap-back recursing).</summary>
@@ -303,7 +236,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
         _suppressToggle = false;
     }
 
-    private void AddLabel(ResNode parent, string text, float x, ref float y, float width)
+    private void AddLabel(string text, float x, ref float y, float width)
     {
         var label = new TextNode
         {
@@ -316,12 +249,12 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             Position = new Vector2(x, y),
             Size = new Vector2(width, 20f)
         };
-        label.AttachNode(parent);
+        label.AttachNode(this);
         y += 22f;
     }
 
-    /// <summary>A smaller, dimmer instructional line (e.g. "checked = shown").</summary>
-    private void AddHint(ResNode parent, string text, float x, ref float y, float width)
+    /// <summary>A smaller, dimmer instructional line.</summary>
+    private void AddHint(string text, float x, ref float y, float width)
     {
         var hint = new TextNode
         {
@@ -334,7 +267,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             Position = new Vector2(x, y),
             Size = new Vector2(width, 18f)
         };
-        hint.AttachNode(parent);
+        hint.AttachNode(this);
         y += 20f;
     }
 

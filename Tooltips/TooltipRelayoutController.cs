@@ -70,6 +70,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // Condition slot in the order; when it shows, the native durability/spiritbond gauge (#7) is hidden.
     private readonly ConditionBlockProvider _condition;
 
+    // Owns/draws BetterTips' Enhanced-only "Description" block (Lumina lore text, headerless). Laid out at the
+    // EnhancedDescription slot (just above Glamour); the native description block (#40) is hidden in Enhanced
+    // mode regardless (it's in EnhancedHiddenBlockIds).
+    private readonly DescriptionBlockProvider _description;
+
     // Recomputed on config change; each replaced as a whole reference (atomic) so a callback never sees a
     // half-mutated collection.
     private ItemDetailGroup[] _hiddenGroups = [];
@@ -98,6 +103,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     private float _planGlamourY;
     private bool _planShowCondition;
     private float _planConditionY;
+    private bool _planShowDescription;
+    private float _planDescriptionY;
     private readonly List<ItemDetailGroup> _planGroups = [];   // named groups to keep hidden
     private readonly List<uint> _planHideIds = [];             // block/sub-node ids to keep hidden (incl. conditional)
     private readonly List<(uint Id, float Y)> _planBlocks = []; // native content blocks → absolute target Y
@@ -139,7 +146,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     public TooltipRelayoutController(IAddonLifecycle addonLifecycle, IGameGui gameGui,
         Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet,
         UnifiedHeaderBlockProvider unified, UnifiedBonusesBlockProvider bonuses, GlamourBlockProvider glamour,
-        ConditionBlockProvider condition)
+        ConditionBlockProvider condition, DescriptionBlockProvider description)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
@@ -150,6 +157,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _bonuses = bonuses;
         _glamour = glamour;
         _condition = condition;
+        _description = description;
         Rebuild();
 
         // Compute the plan when the game updates the tooltip's content...
@@ -161,6 +169,38 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
     /// <summary>Recompute the hide sets and section order from the current config. Call after any change.</summary>
     public void Rebuild()
+    {
+        if (_config.EnhancedMode)
+            RebuildEnhanced();
+        else
+            RebuildModifier();
+
+        // Force a fresh plan on the next update (the old one may target now-shown/now-hidden sections), and
+        // recompute against the live tooltip on the next frame so a config change applies immediately.
+        _hasPlan = false;
+        _prevIncluded.Clear();
+        _recomputePending = true;
+    }
+
+    /// <summary>
+    ///     The Enhanced tooltip: disregard the structure config entirely and impose a fixed layout — hide every
+    ///     native content block (<see cref="TooltipLayout.EnhancedHiddenBlockIds" />) and drive the five custom
+    ///     sections in <see cref="TooltipLayout.EnhancedBodyOrder" /> (the unified header anchors the top, the
+    ///     other four stack below). The header's binding line and storage icons survive because they're not in
+    ///     the hidden set; the unified header hides the native name/icon/category itself, only when it shows.
+    /// </summary>
+    private void RebuildEnhanced()
+    {
+        _hiddenGroups = [];
+        _hiddenNodeIds = [];
+        _conditionalBlocks = [];
+        _hiddenBlocks = TooltipLayout.EnhancedHiddenBlockIds;
+        _sectionOrder = TooltipLayout.EnhancedBodyOrder;
+        _reorderActive = true; // not the default order; the idle short-circuit must not fire
+    }
+
+    /// <summary>The modifier tooltip: the structure config (hides + user order) governs.</summary>
+    private void RebuildModifier()
     {
         _hiddenGroups = TooltipFieldMap.GroupsFor(_config.HiddenSections);
         _hiddenNodeIds = TooltipFieldMap.NodeIdsFor(_config.HiddenSections);
@@ -192,12 +232,6 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _sectionOrder = order.ToArray();
 
         _reorderActive = !_sectionOrder.SequenceEqual(TooltipLayout.DefaultOrder);
-
-        // Force a fresh plan on the next update (the old one may target now-shown/now-hidden sections), and
-        // recompute against the live tooltip on the next frame so a config change applies immediately.
-        _hasPlan = false;
-        _prevIncluded.Clear();
-        _recomputePending = true;
     }
 
     /// <summary>Request a node-tree dump of the ItemDetail addon on the next update (dev aid).</summary>
@@ -281,6 +315,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _bonuses.Hide();
             _glamour.Hide();
             _condition.Hide();
+            _description.Hide();
             return;
         }
 
@@ -323,17 +358,19 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planShowBonuses = false;
         _planShowGlamour = false;
         _planShowCondition = false;
+        _planShowDescription = false;
         _planControlY = float.NaN;
 
         // Build + measure our added blocks first; they leave themselves HIDDEN, so the scans below ignore them.
         // The bonuses block scrapes the native materia block (#93), the glamour block scrapes the description
         // block (#40), and the condition block scrapes the durability/spiritbond gauge (#7), so all must
-        // measure BEFORE the hides below.
+        // measure BEFORE the hides below. (The description block reads Lumina, so order doesn't matter for it.)
         var gearWants = _gearSet.TryMeasure(addon, root->Width, out var gearHeight);
         var unifiedWants = _unified.TryMeasure(addon, root->Width, out var unifiedHeight);
         var bonusesWants = _bonuses.TryMeasure(addon, root->Width, out var bonusesHeight);
         var glamourWants = _glamour.TryMeasure(addon, root->Width, out var glamourHeight);
         var conditionWants = _condition.TryMeasure(addon, root->Width, out var conditionHeight);
+        var descriptionWants = _description.TryMeasure(addon, root->Width, out var descriptionHeight);
 
         var hasHides = _hiddenGroups.Length > 0 || _hiddenBlocks.Length > 0 ||
                        _hiddenNodeIds.Length > 0 || _conditionalBlocks.Length > 0;
@@ -341,7 +378,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         // Do no harm when idle: nothing configured to change → leave the game's layout pristine (no plan).
         // Restore anything a prior (now-removed) customization left applied to this same item first.
         if (!hasHides && !_reorderActive && !gearWants && !unifiedWants && !bonusesWants && !glamourWants &&
-            !conditionWants)
+            !conditionWants && !descriptionWants)
         {
             RestorePrevious(addon);
             _prevIncluded.Clear();
@@ -511,6 +548,14 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                     _planConditionY = y;
                     y += conditionHeight;
                 }
+                else if (id == LayoutSection.EnhancedDescription && descriptionWants)
+                {
+                    _description.PlaceAt(y);
+                    _description.Show();
+                    _planShowDescription = true;
+                    _planDescriptionY = y;
+                    y += descriptionHeight;
+                }
 
                 continue;
             }
@@ -593,6 +638,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planShowBonuses = false;
         _planShowGlamour = false;
         _planShowCondition = false;
+        _planShowDescription = false;
         _planControlY = float.NaN;
         _prevIncluded.Clear();
         _appliedHideIds.Clear();
@@ -730,6 +776,17 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         else
         {
             _condition.Hide();
+        }
+
+        // Description block (Enhanced-only).
+        if (_planShowDescription)
+        {
+            _description.PlaceAt(_planDescriptionY);
+            _description.Show();
+        }
+        else
+        {
+            _description.Hide();
         }
 
         // The durability/spiritbond gauge (#7) is only ever hidden now (when the Condition section or unified

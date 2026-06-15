@@ -33,7 +33,14 @@ public enum LayoutSection
     // single horizontal row of durability + spiritbond (per-instance, read from the gauge's own value nodes)
     // + sell price (Lumina), each an icon with its value. Replaces the native durability/spiritbond gauge
     // bars (#7), which the relayout hides when this section shows. Append-only.
-    Condition
+    Condition,
+
+    // BetterTips' own "Description" section — Enhanced-only (not in the modifier Sections list). A simple,
+    // headerless, left-aligned render of the item's lore description sourced from Lumina (Item.Description),
+    // which naturally excludes the per-instance noise the native description block (#40) overlays — applied
+    // dyes and the "Advanced Melding Forbidden" notice. Positioned specially like the other custom sections.
+    // Append-only.
+    EnhancedDescription
 }
 
 /// <summary>Display label + the block node id(s) a <see cref="LayoutSection" /> moves as a unit.</summary>
@@ -81,10 +88,12 @@ public static class TooltipLayout
     /// <summary>
     ///     Sub-nodes of the header (<c>#17</c>) the "Unified item header" enhancement hides when it replaces
     ///     the header: the name (<c>#33</c>), icon component (<c>#32</c>), quantity "(Total: n)" (<c>#34</c>),
-    ///     category line (<c>#35</c>), and the put-in indicators (<c>#24</c>). The binding/untradable/unique
-    ///     line (<see cref="BindingLineBlockId" />) is deliberately left alone.
+    ///     and the category line (<c>#35</c>). The binding/untradable/unique line
+    ///     (<see cref="BindingLineBlockId" />) is deliberately left alone, and so are the top-right
+    ///     storage-location indicators (<c>#24</c> — crest-applicable / Glamour Dresser / Armoire / Cabinet
+    ///     icons): the redesigned header doesn't re-render them, so hiding them just dropped them entirely.
     /// </summary>
-    public static readonly uint[] UnifiedHeaderHiddenNodeIds = [32, 33, 34, 35, 24];
+    public static readonly uint[] UnifiedHeaderHiddenNodeIds = [32, 33, 34, 35];
 
     /// <summary>The native item-name text node (<c>#33</c>) inside the header. The unified header reads its
     /// <b>rendered</b> SeString (with the game's payload glyphs — HQ mark, etc.) so its own name line shows
@@ -134,7 +143,33 @@ public static class TooltipLayout
 
     /// <summary>Our own non-native sections (positioned by their controllers, not the reorder pass).</summary>
     public static bool IsCustom(LayoutSection id)
-        => id is LayoutSection.GearSets or LayoutSection.Glamour or LayoutSection.Condition;
+        => id is LayoutSection.GearSets or LayoutSection.Glamour or LayoutSection.Condition
+            or LayoutSection.EnhancedDescription;
+
+    /// <summary>
+    ///     The fixed body order of the <b>Enhanced</b> tooltip (used when
+    ///     <see cref="Configuration.Configuration.EnhancedMode" /> is on). The unified item header is the
+    ///     anchor at the top (placed below the kept binding line, like the live header), so it isn't listed
+    ///     here; below it come the unified bonuses &amp; materia (laid out at the <see cref="LayoutSection.AttributeBonuses" />
+    ///     slot), then the glamour, gear-set, and condition custom sections — matching the catalog the editor's
+    ///     Enhanced tab advertises.
+    /// </summary>
+    public static readonly LayoutSection[] EnhancedBodyOrder =
+    [
+        LayoutSection.AttributeBonuses, LayoutSection.EnhancedDescription, LayoutSection.Glamour,
+        LayoutSection.GearSets, LayoutSection.Condition
+    ];
+
+    /// <summary>
+    ///     Every native content block the Enhanced tooltip hides — it shows only its five custom sections plus
+    ///     the header's preserved binding/untradable line (<see cref="BindingLineBlockId" />) and storage icons
+    ///     (<c>#24</c>). Damage/Defense (<c>#36</c>), Item Level (<c>#62</c>), Description (<c>#40</c>),
+    ///     Bonuses (<c>#97</c>), Materia (<c>#93</c>), Effects (<c>#49</c>), Crafting &amp; Repairs (<c>#68</c>),
+    ///     Vendor/Market (<c>#43</c>,<c>#47</c>), Requirements (<c>#53</c>), Crafter Signature (<c>#4</c>). The
+    ///     native header name/icon/category sub-nodes are <b>not</b> here — the unified header hides those itself
+    ///     (only when it shows), so a non-equippable hover keeps its native name.
+    /// </summary>
+    public static readonly uint[] EnhancedHiddenBlockIds = [36, 62, 40, 97, 93, 49, 68, 43, 47, 53, 4];
 
     /// <summary>The default top-to-bottom order (best-effort match for the game's natural order).</summary>
     public static readonly LayoutSection[] DefaultOrder = Sections.Select(s => s.Id).ToArray();

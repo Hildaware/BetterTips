@@ -52,6 +52,18 @@ public sealed class ConfigWindow : Window
             changed = true;
         }
 
+        // The product selector: the all-or-nothing Enhanced tooltip vs the modifier's structure controls.
+        using (ImRaii.Disabled(!_config.Enabled))
+        {
+            var enhanced = _config.EnhancedMode;
+            if (ImGui.Checkbox("Enhanced tooltip (curated layout — disables the structure controls below)",
+                    ref enhanced))
+            {
+                _config.EnhancedMode = enhanced;
+                changed = true;
+            }
+        }
+
         ImGui.Separator();
 
         using (ImRaii.Disabled(!_config.Enabled))
@@ -86,10 +98,23 @@ public sealed class ConfigWindow : Window
             _onChanged();
     }
 
-    /// <summary>The catalog pane: a "shown" checkbox per movable block, then per detail hide.</summary>
+    /// <summary>The catalog pane: a "shown" checkbox per movable block, then per detail hide. Disabled while
+    /// the Enhanced tooltip is on (its curated layout disregards the structure config).</summary>
     private bool DrawCatalog()
     {
         var changed = false;
+
+        if (_config.EnhancedMode)
+        {
+            ImGui.TextWrapped("Enhanced tooltip is on — it shows a fixed curated layout (unified header, " +
+                              "unified bonuses & materia, glamour, gear sets, condition) and ignores these " +
+                              "structure controls. Turn it off above to edit them.");
+            ImGui.Spacing();
+            ImGui.Separator();
+            ImGui.Spacing();
+        }
+
+        using var disabled = ImRaii.Disabled(_config.EnhancedMode);
 
         ImGui.TextDisabled("Sections (unchecked = removed):");
         ImGui.Spacing();
@@ -127,29 +152,6 @@ public sealed class ConfigWindow : Window
 
             if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(info.Description))
                 ImGui.SetTooltip(info.Description);
-        }
-
-        // Curated enhancement toggles (shares EnhancementCatalog with the native editor so the two can't
-        // drift). Empty until the first one ships, so the whole section is skipped while there are none.
-        if (EnhancementCatalog.All.Length > 0)
-        {
-            ImGui.Spacing();
-            ImGui.Separator();
-            ImGui.TextDisabled("Enhancements:");
-            ImGui.Spacing();
-
-            foreach (var info in EnhancementCatalog.All)
-            {
-                var enabled = EnhancementCatalog.IsEnabled(_config, info.Id);
-                if (ImGui.Checkbox($"{info.Label}##enh_{(int)info.Id}", ref enabled))
-                {
-                    EnhancementCatalog.SetEnabled(_config, info.Id, enabled);
-                    changed = true;
-                }
-
-                if (ImGui.IsItemHovered() && !string.IsNullOrEmpty(info.Description))
-                    ImGui.SetTooltip(info.Description);
-            }
         }
 
         return changed;

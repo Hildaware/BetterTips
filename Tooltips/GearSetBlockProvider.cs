@@ -83,7 +83,8 @@ public sealed unsafe class GearSetBlockProvider : IDisposable
         height = 0f;
         try
         {
-            if (addon is null || !_config.Enabled || !_config.ShowGearSets)
+            // Forced on by the Enhanced tooltip (one of its five sections); otherwise the modifier-mode toggle.
+            if (addon is null || !_config.Enabled || !(_config.EnhancedMode || _config.ShowGearSets))
             {
                 Hide();
                 return false;

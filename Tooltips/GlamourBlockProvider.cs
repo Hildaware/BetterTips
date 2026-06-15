@@ -66,8 +66,9 @@ public sealed unsafe class GlamourBlockProvider : IDisposable
         _addonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnPreFinalize);
     }
 
-    /// <summary>Whether the feature (and the plugin) is on.</summary>
-    public bool Enabled => _config.Enabled && _config.ShowGlamour;
+    /// <summary>Whether the feature (and the plugin) is on. Forced on by the Enhanced tooltip (one of its five
+    /// sections); otherwise follows the modifier-mode <see cref="Configuration.Configuration.ShowGlamour" /> toggle.</summary>
+    public bool Enabled => _config.Enabled && (_config.EnhancedMode || _config.ShowGlamour);
 
     /// <summary>
     ///     Build/refresh the block for the current hover and report its height, leaving it <b>hidden</b> so the

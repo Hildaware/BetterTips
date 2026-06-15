@@ -18,6 +18,19 @@ public sealed class Configuration : IPluginConfiguration
     public bool Enabled { get; set; } = true;
 
     /// <summary>
+    ///     Which of the two products is active. When <c>true</c> the <b>Enhanced</b> tooltip is shown: an
+    ///     all-or-nothing curated layout of BetterTips' custom sections in a fixed order (unified header,
+    ///     unified bonuses &amp; materia, glamour, gear sets, condition) — every other native section is
+    ///     hidden (only the header's binding/untradable line and storage icons are kept). While it's on the
+    ///     <b>structure</b> config below (<see cref="HiddenSections" /> / <see cref="HiddenLayoutSections" /> /
+    ///     <see cref="SectionOrder" />) is disregarded and the editor's Structure tab is locked. When
+    ///     <c>false</c> the <b>modifier</b> tooltip is shown: the structure config governs (add / remove /
+    ///     reorder native sections, plus the gear-set / glamour / condition additions). A missing field in an
+    ///     old config keeps this initializer (off), so no migration is needed.
+    /// </summary>
+    public bool EnhancedMode { get; set; }
+
+    /// <summary>
     ///     The finer, non-block detail hides (the category line inside the header, the extract/project
     ///     flags line, the "Advanced Melding Forbidden" notice, the control-hints row). Whole movable
     ///     blocks are hidden via <see cref="HiddenLayoutSections" /> instead. Anything not listed here is

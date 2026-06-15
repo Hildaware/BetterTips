@@ -55,9 +55,10 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
         _addonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnPreFinalize);
     }
 
-    /// <summary>Whether the enhancement (and the plugin) is on.</summary>
+    /// <summary>Whether the enhancement (and the plugin) is on. The unified header ships only as part of the
+    /// all-or-nothing Enhanced tooltip, so it follows <see cref="Configuration.Configuration.EnhancedMode" />.</summary>
     public bool Enabled
-        => _config.Enabled && EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedItemHeader);
+        => _config.Enabled && _config.EnhancedMode;
 
     /// <summary>
     ///     Build/refresh the block for the current hover and report its height, leaving it <b>hidden</b> so

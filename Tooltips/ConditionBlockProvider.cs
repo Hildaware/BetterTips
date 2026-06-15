@@ -36,6 +36,10 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
     public const float RowHeight = 28f;      // height of the single content row (fits the icon)
     public const uint BodyFontSize = 12;
 
+    // The block is headerless (no title/divider), so add a little top padding to separate the row from the
+    // section above it. Shared with the editor preview's BuildCondition.
+    public const float TopPad = 8f;
+
     // With only two entries (e.g. an unsellable item — no sell price), pull them in from the edges so they sit
     // nearer the center rather than at the far corners. Falls back to BodyInsetX on a tooltip too narrow to
     // hold it.
@@ -77,8 +81,9 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
         _addonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonName, OnPreFinalize);
     }
 
-    /// <summary>Whether the feature (and the plugin) is on.</summary>
-    public bool Enabled => _config.Enabled && _config.ShowCondition;
+    /// <summary>Whether the feature (and the plugin) is on. Forced on by the Enhanced tooltip (one of its five
+    /// sections); otherwise follows the modifier-mode <see cref="Configuration.Configuration.ShowCondition" /> toggle.</summary>
+    public bool Enabled => _config.Enabled && (_config.EnhancedMode || _config.ShowCondition);
 
     /// <summary>
     ///     Build/refresh the block for the current hover and report its height, leaving it <b>hidden</b> so the
@@ -142,7 +147,7 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
             // BodyInsetX padding on both sides. Measuring each value unscaled (the live addon renders at the
             // user's UI scale, but our coordinates are node-local — same reasoning as the unified-materia
             // block's right-alignment measure) gives the group width needed to right-align / center it.
-            var y = block.BodyTop;
+            var y = block.BodyTop + TopPad;
             var count = entries.Count;
             var edge = count == 2 && width - 2f * TwoEntryEdgePad >= 80f
                 ? TwoEntryEdgePad
@@ -179,7 +184,7 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
                 _values[i].IsVisible = false;
             }
 
-            height = block.Resize(width, RowHeight) + BlockBottomPad;
+            height = block.Resize(width, TopPad + RowHeight) + BlockBottomPad;
             return true;
         }
         catch (Exception ex)
@@ -224,7 +229,8 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
 
         if (_block is null)
         {
-            _block = new TooltipContentBlock { HeaderText = "Condition", IsVisible = false };
+            _block = new TooltipContentBlock { IsVisible = false };
+            _block.SetHeaderless(); // no title/divider — just the row, with a little top padding
 
             // Attach under the header (#17), like the other added blocks: the game's content reflow leaves the
             // header's children alone, so the block stays put, and the header sits at y=0 so block-relative Y

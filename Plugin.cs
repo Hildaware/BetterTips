@@ -39,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly UnifiedBonusesBlockProvider _unifiedBonuses;
     private readonly GlamourBlockProvider _glamour;
     private readonly ConditionBlockProvider _condition;
+    private readonly DescriptionBlockProvider _description;
     private readonly IPluginLog _log;
     private readonly TooltipRelayoutController _relayout;
     private readonly IDalamudPluginInterface _pluginInterface;
@@ -158,10 +159,11 @@ public sealed class Plugin : IDalamudPlugin
         _unifiedBonuses = new UnifiedBonusesBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
         _glamour = new GlamourBlockProvider(addonLifecycle, gameGui, dataManager, glamourSource, config, log);
         _condition = new ConditionBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
+        _description = new DescriptionBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
 
         // Primary path: the signature-free single-pass relayout (hide + reorder + gear-set + unified header +
         // unified bonuses/materia + glamour + condition).
-        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet, _unifiedHeader, _unifiedBonuses, _glamour, _condition);
+        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet, _unifiedHeader, _unifiedBonuses, _glamour, _condition, _description);
         // Fallback/enhancement: a signature hook that blanks text-only lines for the cleanest collapse, and
         // snapshots the glamour name for the glamour block. Only active if the signature resolves; otherwise
         // it self-disables to a harmless no-op (the glamour name is then unavailable, but dyes still scrape).
@@ -199,7 +201,8 @@ public sealed class Plugin : IDalamudPlugin
         {
             InternalName = "BetterTipsControls",
             Title = "BetterTips",
-            Size = new Vector2(300f, 580f)
+            // Tall enough for the flat layout: the app-level switches + the whole Structure sub-group stacked.
+            Size = new Vector2(300f, 720f)
         };
 
         // Fallback surface (/btips classic): the ImGui settings window — insurance if the native window has
@@ -264,6 +267,7 @@ public sealed class Plugin : IDalamudPlugin
         _unifiedBonuses.Dispose();
         _glamour.Dispose();
         _condition.Dispose();
+        _description.Dispose();
         _controlWindow.Dispose();
         _previewWindow.Dispose();
         KamiToolKitLibrary.Dispose();
