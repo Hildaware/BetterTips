@@ -56,6 +56,14 @@ public sealed class Configuration : IPluginConfiguration
     public bool ShowGearSets { get; set; } = true;
 
     /// <summary>
+    ///     Append a "Glamour" section showing the glamoured-appearance name and the applied dye channels
+    ///     (with color swatches). Like Gear Sets this <em>adds</em> content and honors <see cref="Enabled" />;
+    ///     it only appears when the hovered item actually has a glamour and/or dye. A missing field in an old
+    ///     config keeps this initializer, so no migration is needed.
+    /// </summary>
+    public bool ShowGlamour { get; set; } = true;
+
+    /// <summary>
     ///     The curated <see cref="Enhancement" /> toggles the user has enabled (the editor's "Enhancements"
     ///     tab). Opt-in: anything not listed here is off, so an old config (missing the field) starts empty
     ///     and needs no migration. Serialized by enum value, so <see cref="Enhancement" /> members are

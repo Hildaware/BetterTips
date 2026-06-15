@@ -31,7 +31,8 @@ public sealed class SampleItemData
     private readonly Dictionary<LayoutSection, Row[]> _body;
 
     private SampleItemData(string name, string category, uint itemLevel, ushort icon,
-        Row primaryStat, uint requiredLevel, byte rarity, Dictionary<LayoutSection, Row[]> body)
+        Row primaryStat, uint requiredLevel, byte rarity, Dictionary<LayoutSection, Row[]> body,
+        UnifiedBonusesData unifiedBonuses)
     {
         Name = name;
         Category = category;
@@ -41,6 +42,7 @@ public sealed class SampleItemData
         RequiredLevel = requiredLevel;
         Rarity = rarity;
         _body = body;
+        UnifiedBonuses = unifiedBonuses;
     }
 
     private SampleItemData()
@@ -53,6 +55,7 @@ public sealed class SampleItemData
         RequiredLevel = 0;
         Rarity = 2;
         _body = new Dictionary<LayoutSection, Row[]>();
+        UnifiedBonuses = new UnifiedBonusesData([], []);
     }
 
     /// <summary>The item's display name (header line).</summary>
@@ -79,6 +82,11 @@ public sealed class SampleItemData
 
     /// <summary>The item rarity (1 normal … 7 aetherial) — drives the unified header's name color.</summary>
     public byte Rarity { get; }
+
+    /// <summary>The sample data for the "Unified bonuses &amp; materia" enhancement's section — the attribute
+    /// bonuses (colored by group) plus a representative set of melded materia. Built from Lumina so the preview
+    /// renders the same design the live block will.</summary>
+    public UnifiedBonusesData UnifiedBonuses { get; }
 
     /// <summary>The reconstructed body rows for a section (empty → the card shows just its header).</summary>
     public Row[] BodyRows(LayoutSection section)
@@ -123,7 +131,7 @@ public sealed class SampleItemData
 
             if (chosen is null) return new SampleItemData();
 
-            return FromItem(chosen.Value);
+            return FromItem(chosen.Value, data);
         }
         catch (Exception ex)
         {
@@ -132,7 +140,7 @@ public sealed class SampleItemData
         }
     }
 
-    private static SampleItemData FromItem(Item item)
+    private static SampleItemData FromItem(Item item, IDataManager data)
     {
         var body = new Dictionary<LayoutSection, Row[]>();
         var isWeapon = item.DamagePhys > 0;
@@ -185,8 +193,20 @@ public sealed class SampleItemData
             ? [new Row("", $"Sells for {item.PriceLow:N0} gil")]
             : [new Row("", "Cannot be sold")];
 
+        // The crafter-signature line (only on signed/HQ player-crafted items); a representative name in the mock.
+        body[LayoutSection.CrafterSignature] = [new Row("", "Iam Banana")];
+
         // The real Gear Sets row renders job icons; in the mock it's a representative note.
         body[LayoutSection.GearSets] = [new Row("", "(job icons for gear sets with this item)")];
+
+        // The real Glamour section shows the appearance name + dye swatches (live only); the mock lists them
+        // as text rows so the card has representative content to reorder.
+        body[LayoutSection.Glamour] =
+        [
+            new Row("", "Peacelover's Hat"),
+            new Row("Dye 1", "Coral Pink"),
+            new Row("Dye 2", "Ink Blue")
+        ];
 
         // The unified header's big primary stat: weapons show the higher of Physical/Magic damage with its
         // descriptor; armor shows the higher of Physical/Magic defense.
@@ -208,7 +228,75 @@ public sealed class SampleItemData
             primaryStat,
             item.LevelEquip,
             item.Rarity,
-            body);
+            body,
+            BuildUnifiedBonuses(item, data));
+    }
+
+    /// <summary>
+    ///     The sample data for the "Unified bonuses &amp; materia" section: the item's attribute bonuses
+    ///     (classified into the green / pink / gold grouping and sorted that way), plus a representative set of
+    ///     melded materia pulled from the Lumina <see cref="Materia" /> sheet (icon + stat boost). Live, this
+    ///     materia is scraped per-instance; the preview just needs something realistic to render.
+    /// </summary>
+    private static UnifiedBonusesData BuildUnifiedBonuses(Item item, IDataManager data)
+    {
+        var bonuses = new List<BonusEntry>();
+        for (var i = 0; i < item.BaseParam.Count; i++)
+        {
+            var param = item.BaseParam[i];
+            var value = item.BaseParamValue[i];
+            if (param.RowId == 0 || value == 0) continue;
+
+            var name = param.Value.Name.ToString();
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            bonuses.Add(new BonusEntry(name, $"+{value}", UnifiedBonusesData.Classify(name)));
+        }
+
+        bonuses = bonuses.OrderBy(b => (int)b.Color).ToList();
+        var materia = BuildSampleMateria(data);
+        return new UnifiedBonusesData(bonuses, materia);
+    }
+
+    /// <summary>A few representative melded materia from the Lumina <see cref="Materia" /> sheet (highest grade
+    /// of each) — icon + stat boost, colored by group — plus a couple of empty sockets so the preview shows the
+    /// empty-slot rendering. Guarded; an empty list just renders bonuses only.</summary>
+    private static List<MateriaEntry> BuildSampleMateria(IDataManager data)
+    {
+        var result = new List<MateriaEntry>();
+        try
+        {
+            var sheet = data.GetExcelSheet<Materia>();
+            foreach (var materia in sheet)
+            {
+                if (result.Count >= 3) break;
+                if (materia.BaseParam.RowId == 0) continue;
+
+                var name = materia.BaseParam.Value.Name.ToString();
+                if (string.IsNullOrWhiteSpace(name)) continue;
+
+                // Use the highest grade that has a non-zero value and a real materia item (for its icon).
+                for (var grade = materia.Value.Count - 1; grade >= 0; grade--)
+                {
+                    var value = materia.Value[grade];
+                    if (value <= 0) continue;
+                    var matItem = materia.Item[grade];
+                    if (matItem.RowId == 0) continue;
+
+                    result.Add(new MateriaEntry(matItem.Value.Icon, name, $"+{value}", UnifiedBonusesData.Classify(name)));
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort sample data — leave the materia empty if the sheet can't be read.
+        }
+
+        // Filled slots grouped green → pink → gold, then a couple of empty sockets to show that rendering.
+        var ordered = result.OrderBy(m => (int)m.Color).ToList();
+        ordered.Add(new MateriaEntry(0, string.Empty, string.Empty, BonusColor.Bonus, IsEmpty: true));
+        ordered.Add(new MateriaEntry(0, string.Empty, string.Empty, BonusColor.Bonus, IsEmpty: true));
+        return ordered;
     }
 
     private static SampleItemData.Row[] BuildMateria(int slots)

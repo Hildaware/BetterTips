@@ -97,6 +97,8 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     private TextNode? _controlHints;
     private ResNode? _unifiedHeader;
     private UnifiedHeaderNodes? _unifiedNodes;
+    private ResNode? _bonusesBlock;
+    private UnifiedBonusesNodes? _bonusesNodes;
     private readonly Dictionary<LayoutSection, TooltipContentBlock> _cards = new();
 
     // The current absolute slot Y of each visible card. A card whose live Y has drifted from its slot is the
@@ -141,6 +143,9 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         _unifiedNodes?.Reset();
         _unifiedNodes = null;
         _unifiedHeader = null;
+        _bonusesNodes?.Reset();
+        _bonusesNodes = null;
+        _bonusesBlock = null;
     }
 
     protected override void OnDraw(AtkUnitBase* addon)
@@ -231,6 +236,9 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         // The unified item-header block (built hidden; shown only when the enhancement is enabled).
         BuildUnifiedHeader(cardWidth);
 
+        // The unified bonuses/materia block (built hidden; shown at the Bonuses slot when its enhancement is on).
+        BuildBonusesBlock(cardWidth);
+
         _controlHints = new TextNode
         {
             String = "Equip      Cast      Discard",
@@ -252,7 +260,8 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         or LayoutSection.CraftingRepairs
         or LayoutSection.Requirements
         or LayoutSection.Effects
-        or LayoutSection.GearSets;
+        or LayoutSection.GearSets
+        or LayoutSection.Glamour;
 
     private TooltipContentBlock BuildCard(LayoutSection section, float width)
     {
@@ -440,10 +449,28 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         var data = new UnifiedHeaderData(_sample.Name, _sample.Icon, _sample.Category,
             _sample.PrimaryStat.Value, _sample.PrimaryStat.Label, _sample.ItemLevel, _sample.RequiredLevel,
             jobIcons, "Disciples of War or Magic", _sample.Rarity,
-            JobIconBase + (uint)SampleJobs[0], CurrentJobEquippable: true);
+            JobIconBase + (uint)SampleJobs[0], CurrentJobEquippable: true, MeetsLevelRequirement: true);
 
         var height = _unifiedNodes.Update(data, width);
         _unifiedHeader.Size = new Vector2(width, height);
+    }
+
+    /// <summary>
+    ///     The "Unified bonuses &amp; materia" enhancement's block — the attribute Bonuses and the Materia
+    ///     sections merged into one two-column section (rendered by the shared <see cref="UnifiedBonusesNodes" />
+    ///     so it's identical to the live tooltip). Built once from the sample and hidden until the enhancement
+    ///     is on; <see cref="RefreshPreview" /> shows/positions it at the Bonuses slot in the order.
+    /// </summary>
+    private void BuildBonusesBlock(float width)
+    {
+        _bonusesBlock = new ResNode { IsVisible = false, Size = new Vector2(width, 0f) };
+        _bonusesBlock.AttachNode(_previewRoot);
+
+        _bonusesNodes = new UnifiedBonusesNodes();
+        _bonusesNodes.Build(_bonusesBlock);
+
+        var height = _bonusesNodes.Update(_sample.UnifiedBonuses, width);
+        _bonusesBlock.Size = new Vector2(width, height);
     }
 
     private static void AddBodyText(NodeBase parent, string text, Vector4 color, float x, float y,
@@ -510,6 +537,8 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         if (_previewRoot is null) return;
 
         var unified = EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedItemHeader);
+        var bonusesEnh = EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria);
+        if (!bonusesEnh && _bonusesBlock is not null) _bonusesBlock.IsVisible = false;
 
         // Header region: either the native icon/name/category, or the merged unified-header block at the top
         // (which folds in the icon/name, Item Level, and Damage/Defense — those cards are skipped below).
@@ -554,6 +583,16 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         var y = top;
         foreach (var section in _config.SectionOrder)
         {
+            // The unified bonuses/materia block takes the Bonuses slot in the order (the Materia slot collapses,
+            // since both cards are folded in). It isn't a draggable card — it tracks the Bonuses order position.
+            if (bonusesEnh && section == LayoutSection.AttributeBonuses && _bonusesBlock is not null)
+            {
+                _bonusesBlock.IsVisible = true;
+                _bonusesBlock.Position = new Vector2(PanelPad, y);
+                y += _bonusesBlock.Height + CardGap;
+                continue;
+            }
+
             if (!_cards.TryGetValue(section, out var card)) continue;
 
             if (IsPreviewVisible(section))
@@ -646,6 +685,10 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     {
         if (EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedItemHeader)
             && section is LayoutSection.DamageDefense or LayoutSection.ItemLevelClassJob)
+            return false;
+        // The unified bonuses/materia enhancement absorbs the Bonuses and Materia sections into its own block.
+        if (EnhancementCatalog.IsEnabled(_config, Enhancement.UnifiedBonusesMateria)
+            && section is LayoutSection.AttributeBonuses or LayoutSection.Materia)
             return false;
         return SectionVisibility.IsShown(_config, section);
     }

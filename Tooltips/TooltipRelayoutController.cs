@@ -58,6 +58,14 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // re-anchored below it instead of below the header.
     private readonly UnifiedHeaderBlockProvider _unified;
 
+    // Owns/draws the "Unified bonuses & materia" block (the UnifiedBonusesMateria enhancement). When active it
+    // replaces the native Bonuses (#97) and Materia (#93) blocks, laid out at the Bonuses slot in the order.
+    private readonly UnifiedBonusesBlockProvider _bonuses;
+
+    // Owns/draws BetterTips' "Glamour" block (appearance name + dyes). Laid out at the Glamour slot in the
+    // order; when it shows, the native description block (#40) is hidden if it's printing dye channels.
+    private readonly GlamourBlockProvider _glamour;
+
     // Recomputed on config change; each replaced as a whole reference (atomic) so a callback never sees a
     // half-mutated collection.
     private ItemDetailGroup[] _hiddenGroups = [];
@@ -80,6 +88,10 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     private float _planGearY;
     private bool _planShowUnified;
     private float _planUnifiedY;
+    private bool _planShowBonuses;
+    private float _planBonusesY;
+    private bool _planShowGlamour;
+    private float _planGlamourY;
     private bool _planShowGauge;
     private float _planGaugeX;
     private float _planGaugeY;
@@ -93,6 +105,25 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // gear-set block doesn't jump to the top) for a frame. A genuine empty shell is never in this set
     // (its header text is hidden, so it was never included), so it stays excluded.
     private readonly HashSet<uint> _prevIncluded = [];
+
+    // Node ids / named groups we hid and applied to the live addon last pass. At the start of the next
+    // SAME-item recompute (and on disable) we re-show them, then re-apply only what the current config wants —
+    // so a removed hide / toggled-off enhancement restores immediately, even while statically hovering (the
+    // game otherwise only re-shows on its own next refresh). Cleared WITHOUT re-showing on an item change,
+    // where the new item's refresh governs natural visibility.
+    private readonly HashSet<uint> _appliedHideIds = [];
+    private readonly List<ItemDetailGroup> _appliedGroups = [];
+
+    // The durability/spiritbond gauge's (#7) natural position, captured the first time the unified header
+    // moves it, so we can put it back when we stop. The game does NOT reliably reposition the gauge on a plain
+    // update, so without this it stays displaced after the header is toggled off (the corruption we hit).
+    private bool _gaugeMoved;
+    private float _gaugeOrigX, _gaugeOrigY;
+
+    // Set when the config changes (Rebuild), consumed on the next PreDraw to recompute against the live
+    // tooltip — so a toggle takes effect on the open tooltip immediately, instead of only after the game's
+    // next refresh (which never comes while statically hovering the same item).
+    private bool _recomputePending;
 
     // The raw hovered-item value last seen; a change resets the sticky/transient state for the new item.
     private ulong _lastHovered = ulong.MaxValue;
@@ -110,7 +141,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
     public TooltipRelayoutController(IAddonLifecycle addonLifecycle, IGameGui gameGui,
         Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet,
-        UnifiedHeaderBlockProvider unified)
+        UnifiedHeaderBlockProvider unified, UnifiedBonusesBlockProvider bonuses, GlamourBlockProvider glamour)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
@@ -118,6 +149,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _log = log;
         _gearSet = gearSet;
         _unified = unified;
+        _bonuses = bonuses;
+        _glamour = glamour;
         Rebuild();
 
         // Compute the plan when the game updates the tooltip's content...
@@ -161,9 +194,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
         _reorderActive = !_sectionOrder.SequenceEqual(TooltipLayout.DefaultOrder);
 
-        // Force a fresh plan on the next update (the old one may target now-shown/now-hidden sections).
+        // Force a fresh plan on the next update (the old one may target now-shown/now-hidden sections), and
+        // recompute against the live tooltip on the next frame so a config change applies immediately.
         _hasPlan = false;
         _prevIncluded.Clear();
+        _recomputePending = true;
     }
 
     /// <summary>Request a node-tree dump of the ItemDetail addon on the next update (dev aid).</summary>
@@ -188,6 +223,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             var addon = (AddonItemDetail*)args.Addon.Address;
             if (addon is null) return;
 
+            _recomputePending = false; // this update covers the pending recompute
+
             if (_nodeDumpRequested)
             {
                 _nodeDumpRequested = false;
@@ -210,6 +247,14 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             var addon = (AddonItemDetail*)args.Addon.Address;
             if (addon is null) return;
 
+            // A config change asked for a fresh layout against the live tooltip (no game refresh will come
+            // while statically hovering the same item) — do it before applying/enforcing the plan.
+            if (_recomputePending)
+            {
+                _recomputePending = false;
+                Recompute(addon);
+            }
+
             if (_hasPlan) ApplyPlan(addon);
             if (_watch) LogWatch(addon);
         }
@@ -225,20 +270,17 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     /// </summary>
     private void Recompute(AddonItemDetail* addon)
     {
-        if (!_config.Enabled)
-        {
-            Discard();
-            _gearSet.Hide();
-            _unified.Hide();
-            return;
-        }
-
         var root = addon->RootNode;
-        if (root is null)
+        if (!_config.Enabled || root is null)
         {
+            // Put the tooltip back to its natural state (re-show what we hid, restore the gauge) before going
+            // dormant — but only when the root is valid; a null root means the addon is tearing down.
+            if (root is not null) RestorePrevious(addon);
             Discard();
             _gearSet.Hide();
             _unified.Hide();
+            _bonuses.Hide();
+            _glamour.Hide();
             return;
         }
 
@@ -252,6 +294,13 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _lastHovered = hovered;
             _prevIncluded.Clear();
             _transientSkips = 0;
+            // New item: its own refresh governs natural visibility, so drop our applied-hide tracking WITHOUT
+            // re-showing (re-showing could fight the game's per-item hiding — e.g. an empty Damage block on a
+            // non-gear item). The gauge IS restored, since the game doesn't reliably reposition it on a plain
+            // update.
+            _appliedHideIds.Clear();
+            _appliedGroups.Clear();
+            RestoreGauge(addon);
         }
 
         // Mid-refresh guard. The game periodically blanks every section's text for a frame or two while it
@@ -273,22 +322,35 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planBlocks.Clear();
         _planShowGear = false;
         _planShowUnified = false;
+        _planShowBonuses = false;
+        _planShowGlamour = false;
         _planShowGauge = false;
         _planControlY = float.NaN;
 
         // Build + measure our added blocks first; they leave themselves HIDDEN, so the scans below ignore them.
+        // The bonuses block scrapes the native materia block (#93) and the glamour block scrapes the
+        // description block (#40), so both must measure BEFORE the hides below.
         var gearWants = _gearSet.TryMeasure(addon, root->Width, out var gearHeight);
         var unifiedWants = _unified.TryMeasure(addon, root->Width, out var unifiedHeight);
+        var bonusesWants = _bonuses.TryMeasure(addon, root->Width, out var bonusesHeight);
+        var glamourWants = _glamour.TryMeasure(addon, root->Width, out var glamourHeight);
 
         var hasHides = _hiddenGroups.Length > 0 || _hiddenBlocks.Length > 0 ||
                        _hiddenNodeIds.Length > 0 || _conditionalBlocks.Length > 0;
 
         // Do no harm when idle: nothing configured to change → leave the game's layout pristine (no plan).
-        if (!hasHides && !_reorderActive && !gearWants && !unifiedWants)
+        // Restore anything a prior (now-removed) customization left applied to this same item first.
+        if (!hasHides && !_reorderActive && !gearWants && !unifiedWants && !bonusesWants && !glamourWants)
         {
+            RestorePrevious(addon);
             _prevIncluded.Clear();
             return;
         }
+
+        // Reset our previous modifications to the game's natural state before re-deciding this pass. On a
+        // SAME-item recompute this re-shows what we hid / un-moves the gauge so this pass starts from the
+        // game's real layout (a no-op on an item change, where the trackers were already cleared above).
+        RestorePrevious(addon);
 
         var frame = FindFrame(addon, rootId);
 
@@ -314,10 +376,18 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             // The durability/spiritbond gauge (#7) otherwise floats at the old header top — move it directly
             // left of our icon (align its bars' top, at the gauge's internal y=13, with the icon's top).
             const float gaugeX = 10f; // nudge the bars right so they sit just left of the icon, off the edge
-            var gaugeY = blockTop + UnifiedHeaderNodes.IconOffsetY - 13f;
+            var gaugeY = blockTop + UnifiedHeaderNodes.IconOffsetY - 18f;
             var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
             if (gauge is not null && (gauge->NodeFlags & NodeFlags.Visible) != 0)
             {
+                // Capture the natural position once (before the first move) so we can restore it later.
+                if (!_gaugeMoved)
+                {
+                    _gaugeOrigX = gauge->X;
+                    _gaugeOrigY = gauge->Y;
+                    _gaugeMoved = true;
+                }
+
                 gauge->SetXFloat(gaugeX);
                 gauge->SetYFloat(gaugeY);
                 _planShowGauge = true;
@@ -363,6 +433,17 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _planHideIds.Add(block);
         }
 
+        // Always suppress the crafter-signature line while it shows the async "Obtaining signature…" placeholder
+        // (before the game resolves the crafter's name) — otherwise the order walk would stack that placeholder
+        // text. Once the name resolves the game refreshes the tooltip, this re-runs with the placeholder gone,
+        // and the line is included normally.
+        if (BlockContainsText(addon, TooltipLayout.CrafterSignatureBlockId, TooltipLayout.SignaturePlaceholder))
+        {
+            var node = addon->GetNodeById(TooltipLayout.CrafterSignatureBlockId);
+            if (node is not null) node->ToggleVisibility(false);
+            _planHideIds.Add(TooltipLayout.CrafterSignatureBlockId);
+        }
+
         // The Unified item header: hide the native header name/icon/category/quantity (#32/#33/#34/#35/#24)
         // and the now-folded Damage/Defense (#36) + Item Level (#62) blocks — only when our block is actually
         // showing (so a non-equippable hover never loses its native header). The binding line (#20) is left.
@@ -385,13 +466,36 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                     }
         }
 
+        // The Unified bonuses & materia block: hide the native Bonuses (#97) and Materia (#93) blocks it folds
+        // in — only when our block is actually showing. Our block is then inserted at the Bonuses slot below.
+        if (bonusesWants)
+            foreach (var section in (ReadOnlySpan<LayoutSection>)[LayoutSection.AttributeBonuses, LayoutSection.Materia])
+                if (TooltipLayout.Find(section) is { } info)
+                    foreach (var id in info.BlockIds)
+                    {
+                        var node = addon->GetNodeById(id);
+                        if (node is not null) node->ToggleVisibility(false);
+                        _planHideIds.Add(id);
+                    }
+
+        // The Glamour block folds in the dye channels the game prints into the description block (#40). Hide
+        // #40 only when our block shows AND #40 is actually showing dyes (not real lore text) — so a lore
+        // description on a glamoured item is preserved while its dyes appear in our section instead.
+        if (glamourWants &&
+            BlockContainsText(addon, TooltipLayout.DescriptionBlockId, TooltipLayout.DyeLineMarker))
+        {
+            var node = addon->GetNodeById(TooltipLayout.DescriptionBlockId);
+            if (node is not null) node->ToggleVisibility(false);
+            _planHideIds.Add(TooltipLayout.DescriptionBlockId);
+        }
+
         // --- Lay out the ordered, effective-visible content absolutely from the header anchor. ---
         var y = anchorTop;
         foreach (var id in _sectionOrder)
         {
             if (TooltipLayout.IsCustom(id))
             {
-                if (gearWants)
+                if (id == LayoutSection.GearSets && gearWants)
                 {
                     _gearSet.PlaceAt(y);
                     _gearSet.Show();
@@ -399,7 +503,27 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                     _planGearY = y;
                     y += gearHeight;
                 }
+                else if (id == LayoutSection.Glamour && glamourWants)
+                {
+                    _glamour.PlaceAt(y);
+                    _glamour.Show();
+                    _planShowGlamour = true;
+                    _planGlamourY = y;
+                    y += glamourHeight;
+                }
 
+                continue;
+            }
+
+            // When the Unified bonuses & materia block is showing it takes the Bonuses slot (the natives it
+            // folds in — #97 and #93 — are hidden above, so the Materia slot collapses to nothing).
+            if (bonusesWants && id == LayoutSection.AttributeBonuses)
+            {
+                _bonuses.PlaceAt(y);
+                _bonuses.Show();
+                _planShowBonuses = true;
+                _planBonusesY = y;
+                y += bonusesHeight;
                 continue;
             }
 
@@ -448,6 +572,12 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         foreach (var (id, _) in _planBlocks)
             _prevIncluded.Add(id);
 
+        // Remember what we hid this pass (RestorePrevious cleared the trackers above) so the next same-item
+        // recompute — or a disable — can restore it.
+        foreach (var id in _planHideIds)
+            _appliedHideIds.Add(id);
+        _appliedGroups.AddRange(_planGroups);
+
         _hasPlan = true;
     }
 
@@ -460,9 +590,56 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planBlocks.Clear();
         _planShowGear = false;
         _planShowUnified = false;
+        _planShowBonuses = false;
+        _planShowGlamour = false;
         _planShowGauge = false;
         _planControlY = float.NaN;
         _prevIncluded.Clear();
+        _appliedHideIds.Clear();
+        _appliedGroups.Clear();
+        _gaugeMoved = false;
+    }
+
+    /// <summary>
+    ///     Re-show every node/group we hid last pass and put the gauge back to its natural position, then clear
+    ///     the applied-modification tracking. Called at the start of a same-item recompute (so the pass starts
+    ///     from the game's natural layout) and on disable. Guarded — every native access is null/visibility
+    ///     checked, so a bad pointer can't throw out of the framework callback.
+    /// </summary>
+    private void RestorePrevious(AddonItemDetail* addon)
+    {
+        foreach (var id in _appliedHideIds)
+        {
+            var node = addon->GetNodeById(id);
+            if (node is not null && (node->NodeFlags & NodeFlags.Visible) == 0)
+                node->ToggleVisibility(true);
+        }
+        _appliedHideIds.Clear();
+
+        foreach (var group in _appliedGroups)
+        {
+            var node = ResolveGroupNode(addon, group);
+            if (node is not null && (node->NodeFlags & NodeFlags.Visible) == 0)
+                node->ToggleVisibility(true);
+        }
+        _appliedGroups.Clear();
+
+        RestoreGauge(addon);
+    }
+
+    /// <summary>Restore the durability/spiritbond gauge (#7) to its captured natural position, if we moved it.</summary>
+    private void RestoreGauge(AddonItemDetail* addon)
+    {
+        if (!_gaugeMoved) return;
+
+        var gauge = addon->GetNodeById(TooltipLayout.GaugeBlockId);
+        if (gauge is not null)
+        {
+            if (Math.Abs(gauge->X - _gaugeOrigX) > 0.5f) gauge->SetXFloat(_gaugeOrigX);
+            if (Math.Abs(gauge->Y - _gaugeOrigY) > 0.5f) gauge->SetYFloat(_gaugeOrigY);
+        }
+
+        _gaugeMoved = false;
     }
 
     /// <summary>
@@ -538,6 +715,28 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         else
         {
             _unified.Hide();
+        }
+
+        // Unified bonuses & materia block.
+        if (_planShowBonuses)
+        {
+            _bonuses.PlaceAt(_planBonusesY);
+            _bonuses.Show();
+        }
+        else
+        {
+            _bonuses.Hide();
+        }
+
+        // Glamour block.
+        if (_planShowGlamour)
+        {
+            _glamour.PlaceAt(_planGlamourY);
+            _glamour.Show();
+        }
+        else
+        {
+            _glamour.Hide();
         }
 
         // Durability/spiritbond gauge re-position (only while the unified header owns the top).
@@ -667,7 +866,9 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             var node = list[i];
             if (node is null) continue;
             if ((node->NodeFlags & NodeFlags.Visible) == 0) continue;
-            if (!IsDescendantOf(node, blockId)) continue;
+            // Match the block's own node too, not just descendants: some blocks (the crafter-signature line
+            // #4) ARE a bare Text node with no children, so a descendant-only scan reads them as empty.
+            if (node->NodeId != blockId && !IsDescendantOf(node, blockId)) continue;
 
             if (node->Type == NodeType.Text)
             {
@@ -912,12 +1113,13 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         }
         else if (node->Type == NodeType.Image)
         {
-            extra = DescribeParts(((AtkImageNode*)node)->PartsList);
+            var img = (AtkImageNode*)node;
+            extra = DescribeParts(img->PartsList, img->PartId);
         }
         else if (node->Type == NodeType.NineGrid)
         {
             var ng = (AtkNineGridNode*)node;
-            extra = DescribeParts(ng->PartsList) +
+            extra = DescribeParts(ng->PartsList, ng->PartId) +
                     $" ninegrid(t={ng->TopOffset:0} b={ng->BottomOffset:0} l={ng->LeftOffset:0} r={ng->RightOffset:0})";
         }
 
@@ -941,23 +1143,35 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         }
     }
 
-    /// <summary>Describes an image/nine-grid node's first part: part count, texture file, and part rect —
-    /// enough to identify and reproduce the tooltip's background texture.</summary>
-    private static string DescribeParts(AtkUldPartsList* partsList)
+    /// <summary>
+    ///     Describes an image/nine-grid node's parts: the part count, the <b>active</b> part (the one the node
+    ///     is currently displaying — <paramref name="activePartId" />) with its texture and atlas rect, plus
+    ///     part 0 for reference. The active part's rect (u/v/w/h) is what's needed to reproduce an atlas sprite
+    ///     such as a materia socket; the texture is read per-part (atlas parts can each reference their own).
+    /// </summary>
+    private static string DescribeParts(AtkUldPartsList* partsList, uint activePartId)
     {
         if (partsList is null || partsList->PartCount == 0) return " parts=0";
 
-        var part = &partsList->Parts[0];
-        var tex = "?";
-        var asset = part->UldAsset;
-        if (asset is not null && asset->AtkTexture.Resource is not null &&
-            asset->AtkTexture.Resource->TexFileResourceHandle is not null)
-        {
-            try { tex = asset->AtkTexture.Resource->TexFileResourceHandle->FileName.ToString(); }
-            catch { tex = "?"; }
-        }
+        var active = activePartId < partsList->PartCount ? activePartId : 0;
+        var activePart = &partsList->Parts[active];
+        var part0 = &partsList->Parts[0];
 
-        return $" parts={partsList->PartCount} tex=\"{tex}\" part0(u={part->U} v={part->V} w={part->Width} h={part->Height})";
+        return $" parts={partsList->PartCount} active=#{activePartId} tex=\"{PartTexture(activePart)}\"" +
+               $" part{active}(u={activePart->U} v={activePart->V} w={activePart->Width} h={activePart->Height})" +
+               $" part0(u={part0->U} v={part0->V} w={part0->Width} h={part0->Height})";
+    }
+
+    /// <summary>The texture file backing a single ULD part (atlas parts can each reference their own).</summary>
+    private static string PartTexture(AtkUldPart* part)
+    {
+        var asset = part->UldAsset;
+        if (asset is null || asset->AtkTexture.Resource is null ||
+            asset->AtkTexture.Resource->TexFileResourceHandle is null)
+            return "?";
+
+        try { return asset->AtkTexture.Resource->TexFileResourceHandle->FileName.ToString(); }
+        catch { return "?"; }
     }
 
     public void Dispose()

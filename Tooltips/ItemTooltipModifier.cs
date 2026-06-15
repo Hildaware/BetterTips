@@ -33,6 +33,7 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
         StringArrayData* stringArrayData);
 
     private readonly Configuration.Configuration _config;
+    private readonly GlamourSource _glamour;
     private readonly IPluginLog _log;
     private readonly Hook<GenerateItemTooltipDelegate>? _hook;
 
@@ -43,9 +44,11 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
     // Set by "/btips dump"; on the next tooltip we log every non-empty line + index, then clear it.
     private volatile bool _dumpRequested;
 
-    public ItemTooltipModifier(IGameInteropProvider interop, Configuration.Configuration config, IPluginLog log)
+    public ItemTooltipModifier(IGameInteropProvider interop, Configuration.Configuration config,
+        GlamourSource glamour, IPluginLog log)
     {
         _config = config;
+        _glamour = glamour;
         _log = log;
         Rebuild();
 
@@ -100,6 +103,11 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
                     foreach (var index in indices)
                         BlankField(stringArrayData, index);
                 }
+
+                // Snapshot the glamoured-appearance name (not rendered to any node, so this hook is the only
+                // way to read it) for the Glamour section. Captured unconditionally — the provider gates on
+                // the config — and it's the raw string array, so payload glyphs are preserved.
+                _glamour.Capture(stringArrayData);
             }
             catch (Exception ex)
             {

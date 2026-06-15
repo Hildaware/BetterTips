@@ -32,6 +32,7 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
     private readonly IAddonLifecycle _addonLifecycle;
     private readonly IGameGui _gameGui;
     private readonly IDataManager _data;
+    private readonly IObjectTable _objects;
     private readonly Configuration.Configuration _config;
     private readonly IPluginLog _log;
 
@@ -42,11 +43,12 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
     private float _lastHeight;
 
     public UnifiedHeaderBlockProvider(IAddonLifecycle addonLifecycle, IGameGui gameGui, IDataManager data,
-        Configuration.Configuration config, IPluginLog log)
+        IObjectTable objects, Configuration.Configuration config, IPluginLog log)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
         _data = data;
+        _objects = objects;
         _config = config;
         _log = log;
 
@@ -73,7 +75,7 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
                 return false;
             }
 
-            var data = UnifiedHeaderData.FromHoveredItem(_gameGui, _data);
+            var data = UnifiedHeaderData.FromHoveredItem(_gameGui, _data, _objects);
             if (data is null)
             {
                 Hide();
@@ -94,6 +96,13 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
             if (hovered != _lastHovered)
             {
                 _lastHovered = hovered;
+
+                // Use the rendered native name (#33) — its SeString carries the game's payload glyphs (HQ
+                // mark, etc.) that the payload-free Lumina name lacks. Scraped before the relayout hides #33;
+                // falls back to the Lumina name when unavailable.
+                var nameRaw = ReadNameRaw(addon);
+                if (nameRaw is not null) data = data with { NameRaw = nameRaw };
+
                 _lastHeight = _nodes!.Update(data, width);
                 _block!.Size = new Vector2(width, _lastHeight);
             }
@@ -126,6 +135,17 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
     public void Hide()
     {
         if (_block is not null) _block.IsVisible = false;
+    }
+
+    /// <summary>Copy the rendered native name node's (#33) raw SeString bytes, or <c>null</c> if unavailable.
+    /// Guarded — a bad pointer must not throw out of the layout pass.</summary>
+    private static byte[]? ReadNameRaw(AddonItemDetail* addon)
+    {
+        var node = addon->GetNodeById(TooltipLayout.ItemNameNodeId);
+        if (node is null || node->Type != NodeType.Text) return null;
+
+        var span = ((AtkTextNode*)node)->NodeText.AsSpan();
+        return span.IsEmpty ? null : span.ToArray();
     }
 
     private bool EnsureAttached(AddonItemDetail* addon)

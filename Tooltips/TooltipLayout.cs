@@ -18,7 +18,16 @@ public enum LayoutSection
     VendorMarket,
 
     // Our own added sections (no native block — positioned specially). Append-only, like the rest.
-    GearSets
+    GearSets,
+
+    // The crafter-signature line (#4, a bare Text node showing the crafter's name on signed/HQ player-crafted
+    // items). Appended last to keep existing serialized enum values stable; its slot in the default top-to-
+    // bottom order is set by its position in the Sections list below, not here.
+    CrafterSignature,
+
+    // BetterTips' own "Glamour" section (no native block — positioned specially, like GearSets): the
+    // glamoured-appearance name + applied dye channels. Append-only.
+    Glamour
 }
 
 /// <summary>Display label + the block node id(s) a <see cref="LayoutSection" /> moves as a unit.</summary>
@@ -46,6 +55,23 @@ public static class TooltipLayout
     /// <summary>The control-hints (keybind) row, pinned to the bottom; the relayout places it last.</summary>
     public const uint ControlHintsBlockId = 2;
 
+    /// <summary>The crafter-signature line (<c>#4</c>, a bare Text node showing the crafter's name on signed/HQ
+    /// player-crafted items) — managed as the <see cref="LayoutSection.CrafterSignature" /> section.</summary>
+    public const uint CrafterSignatureBlockId = 4;
+
+    /// <summary>The description block (<c>#40</c>), where the game prints dye channels for dyeable gear. The
+    /// "Glamour" section folds those in, so the relayout hides this block when the dye marker is present.</summary>
+    public const uint DescriptionBlockId = 40;
+
+    /// <summary>The marker the dye lines begin with in the description block (English-only, case-sensitive on
+    /// the game's own text) — used to hide #40 only when it's showing dyes (not real lore).</summary>
+    public const string DyeLineMarker = "Dye 1:";
+
+    /// <summary>The async placeholder the game shows in <see cref="CrafterSignatureBlockId" /> while it resolves
+    /// the crafter's name; the relayout suppresses the line until it becomes the real name. Matched
+    /// case-insensitively (English-only, like the rest of the version-specific text matching).</summary>
+    public const string SignaturePlaceholder = "Obtaining signature";
+
     /// <summary>
     ///     Sub-nodes of the header (<c>#17</c>) the "Unified item header" enhancement hides when it replaces
     ///     the header: the name (<c>#33</c>), icon component (<c>#32</c>), quantity "(Total: n)" (<c>#34</c>),
@@ -53,6 +79,11 @@ public static class TooltipLayout
     ///     line (<see cref="BindingLineBlockId" />) is deliberately left alone.
     /// </summary>
     public static readonly uint[] UnifiedHeaderHiddenNodeIds = [32, 33, 34, 35, 24];
+
+    /// <summary>The native item-name text node (<c>#33</c>) inside the header. The unified header reads its
+    /// <b>rendered</b> SeString (with the game's payload glyphs — HQ mark, etc.) so its own name line shows
+    /// them too, rather than the payload-free Lumina name.</summary>
+    public const uint ItemNameNodeId = 33;
 
     /// <summary>The header's binding/untradable/unique line (<c>#20</c>) — kept visible; the unified block is
     /// placed just below it.</summary>
@@ -70,6 +101,9 @@ public static class TooltipLayout
         new(LayoutSection.DamageDefense,     "Damage / Defense",            [36]),
         new(LayoutSection.ItemLevelClassJob, "Item Level, Class/Job & Lv.", [62]),
         new(LayoutSection.Description,        "Description",                 [40]),
+        // No block ids — BetterTips' own Glamour block (appearance name + dyes), built by GlamourBlockProvider
+        // and laid out by the relayout at this slot. Sits after Description since its dyes come from #40.
+        new(LayoutSection.Glamour,            "Glamour",                     []),
         new(LayoutSection.AttributeBonuses,  "Bonuses",                     [97]),
         new(LayoutSection.Materia,            "Materia",                     [93]),
         new(LayoutSection.Effects,            "Effects",                     [49]),
@@ -79,13 +113,17 @@ public static class TooltipLayout
         // crafting-material line, not a real reorderable section for the user. The enum member stays for
         // serialization safety.
         new(LayoutSection.VendorMarket,       "Vendor / Market",             [43, 47]),
+        // The crafter signature (#4): a bare Text node with the crafter's name, sitting at the very bottom of
+        // the natural layout. A managed section so the relayout restacks it inside the resized window instead
+        // of letting it float below (otherwise the placeholder "Obtaining signature…" / name renders outside).
+        new(LayoutSection.CrafterSignature,   "Crafter Signature",           [CrafterSignatureBlockId]),
         // No block ids — this is BetterTips' own gear-set block, built by GearSetBlockProvider and laid out
         // by TooltipRelayoutController at this order slot (not a native node addressed by id).
         new(LayoutSection.GearSets,           "Gear Sets",                   [])
     ];
 
     /// <summary>Our own non-native sections (positioned by their controllers, not the reorder pass).</summary>
-    public static bool IsCustom(LayoutSection id) => id is LayoutSection.GearSets;
+    public static bool IsCustom(LayoutSection id) => id is LayoutSection.GearSets or LayoutSection.Glamour;
 
     /// <summary>The default top-to-bottom order (best-effort match for the game's natural order).</summary>
     public static readonly LayoutSection[] DefaultOrder = Sections.Select(s => s.Id).ToArray();

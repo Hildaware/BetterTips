@@ -19,16 +19,23 @@ internal static class SectionVisibility
     ];
 
     public static bool IsShown(Configuration.Configuration config, LayoutSection section)
-        => section == LayoutSection.GearSets
-            ? config.ShowGearSets
-            : !config.HiddenLayoutSections.Contains(section);
+        => section switch
+        {
+            LayoutSection.GearSets => config.ShowGearSets,
+            LayoutSection.Glamour => config.ShowGlamour,
+            _ => !config.HiddenLayoutSections.Contains(section)
+        };
 
     public static void SetShown(Configuration.Configuration config, LayoutSection section, bool show)
     {
-        if (section == LayoutSection.GearSets)
+        switch (section)
         {
-            config.ShowGearSets = show;
-            return;
+            case LayoutSection.GearSets:
+                config.ShowGearSets = show;
+                return;
+            case LayoutSection.Glamour:
+                config.ShowGlamour = show;
+                return;
         }
 
         if (show) config.HiddenLayoutSections.Remove(section);
