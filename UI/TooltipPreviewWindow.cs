@@ -261,7 +261,8 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         or LayoutSection.Requirements
         or LayoutSection.Effects
         or LayoutSection.GearSets
-        or LayoutSection.Glamour;
+        or LayoutSection.Glamour
+        or LayoutSection.Condition;
 
     private TooltipContentBlock BuildCard(LayoutSection section, float width)
     {
@@ -278,6 +279,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
             LayoutSection.AttributeBonuses => BuildBonuses(card, width),
             LayoutSection.CraftingRepairs => BuildCrafting(card),
             LayoutSection.GearSets => BuildGearSets(card),
+            LayoutSection.Condition => BuildCondition(card, width),
             _ => BuildRows(card, section)
         };
 
@@ -414,6 +416,63 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         return JobIconSize;
     }
 
+    /// <summary>Condition: a single horizontal row of (icon + value) groups — durability, spiritbond, sell
+    /// price — mirroring the live <see cref="ConditionBlockProvider" /> layout (shared constants, so both move
+    /// together).</summary>
+    private float BuildCondition(TooltipContentBlock card, float width)
+    {
+        var entries = _sample.ConditionSample.Entries();
+        var y = card.BodyTop;
+        var count = entries.Count;
+        var edge = count == 2 && width - 2f * ConditionBlockProvider.TwoEntryEdgePad >= 80f
+            ? ConditionBlockProvider.TwoEntryEdgePad
+            : TooltipContentBlock.BodyInsetX;
+        var leftEdge = edge;
+        var rightEdge = width - edge;
+        var span = rightEdge - leftEdge;
+
+        for (var i = 0; i < count; i++)
+        {
+            var entry = entries[i];
+
+            var value = new TextNode
+            {
+                String = entry.Value,
+                FontType = FontType.Axis,
+                FontSize = ConditionBlockProvider.BodyFontSize,
+                AlignmentType = AlignmentType.TopLeft,
+                TextColor = ValueColor,
+                TextOutlineColor = OutlineColor,
+                TextFlags = TextFlags.AutoAdjustNodeSize
+            };
+            value.AttachNode(card);
+
+            var textW = value.GetTextDrawSize(entry.Value, considerScale: false).X;
+            var groupW = ConditionBlockProvider.IconSize + ConditionBlockProvider.IconValueGap + textW;
+
+            float groupX;
+            if (i == 0) groupX = leftEdge;                          // first → left-align
+            else if (i == count - 1) groupX = rightEdge - groupW;   // last → right-align
+            else groupX = leftEdge + (span - groupW) / 2f;          // middle → center-align
+
+            var icon = new IconImageNode
+            {
+                FitTexture = true,
+                IconId = entry.IconId,
+                Size = new Vector2(ConditionBlockProvider.IconSize, ConditionBlockProvider.IconSize),
+                Position = new Vector2(groupX,
+                    y + (ConditionBlockProvider.RowHeight - ConditionBlockProvider.IconSize) / 2f
+                    + ConditionBlockProvider.IconOffsetY)
+            };
+            icon.AttachNode(card);
+
+            value.Position = new Vector2(groupX + ConditionBlockProvider.IconSize + ConditionBlockProvider.IconValueGap,
+                y + (ConditionBlockProvider.RowHeight - ConditionBlockProvider.BodyFontSize) / 2f);
+        }
+
+        return ConditionBlockProvider.RowHeight;
+    }
+
     /// <summary>Crafting & Repairs: the small condition gear icon at the left, then the tan/white rows.</summary>
     private float BuildCrafting(TooltipContentBlock card)
     {
@@ -442,7 +501,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         _unifiedHeader.AttachNode(_previewRoot);
 
         _unifiedNodes = new UnifiedHeaderNodes();
-        _unifiedNodes.Build(_unifiedHeader, mockDurabilityBars: true);
+        _unifiedNodes.Build(_unifiedHeader);
 
         // The sample shows job icons with the first one (PLD) marked as the "current job" to demo the outline.
         var jobIcons = SampleJobs.Select(j => JobIconBase + (uint)j).ToList();

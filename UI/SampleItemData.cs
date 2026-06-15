@@ -32,7 +32,7 @@ public sealed class SampleItemData
 
     private SampleItemData(string name, string category, uint itemLevel, ushort icon,
         Row primaryStat, uint requiredLevel, byte rarity, Dictionary<LayoutSection, Row[]> body,
-        UnifiedBonusesData unifiedBonuses)
+        UnifiedBonusesData unifiedBonuses, ConditionData conditionSample)
     {
         Name = name;
         Category = category;
@@ -43,6 +43,7 @@ public sealed class SampleItemData
         Rarity = rarity;
         _body = body;
         UnifiedBonuses = unifiedBonuses;
+        ConditionSample = conditionSample;
     }
 
     private SampleItemData()
@@ -56,6 +57,7 @@ public sealed class SampleItemData
         Rarity = 2;
         _body = new Dictionary<LayoutSection, Row[]>();
         UnifiedBonuses = new UnifiedBonusesData([], []);
+        ConditionSample = new ConditionData("100%", "0%", "12,345");
     }
 
     /// <summary>The item's display name (header line).</summary>
@@ -87,6 +89,10 @@ public sealed class SampleItemData
     /// bonuses (colored by group) plus a representative set of melded materia. Built from Lumina so the preview
     /// renders the same design the live block will.</summary>
     public UnifiedBonusesData UnifiedBonuses { get; }
+
+    /// <summary>The sample data for the "Condition" section — representative durability/spiritbond plus the
+    /// item's real sell price (the live values are per-instance; the preview just needs realistic content).</summary>
+    public ConditionData ConditionSample { get; }
 
     /// <summary>The reconstructed body rows for a section (empty → the card shows just its header).</summary>
     public Row[] BodyRows(LayoutSection section)
@@ -220,6 +226,11 @@ public sealed class SampleItemData
                 ? new Row("Magic Defense", item.DefenseMag.ToString())
                 : new Row("Defense", item.DefensePhys.ToString());
 
+        // The Condition section: representative durability/spiritbond (per-instance live) + the item's real
+        // sell price.
+        var condition = new ConditionData("100%", "0%",
+            item.PriceLow > 0 ? item.PriceLow.ToString("N0") : null);
+
         return new SampleItemData(
             item.Name.ToString(),
             item.ItemUICategory.Value.Name.ToString(),
@@ -229,7 +240,8 @@ public sealed class SampleItemData
             item.LevelEquip,
             item.Rarity,
             body,
-            BuildUnifiedBonuses(item, data));
+            BuildUnifiedBonuses(item, data),
+            condition);
     }
 
     /// <summary>
