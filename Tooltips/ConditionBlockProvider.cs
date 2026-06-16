@@ -28,8 +28,8 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
     private const string AddonName = "ItemDetail";
 
     // Horizontal row layout (block-relative). Shared with the editor preview's BuildCondition so both render
-    // the same shape — tune here and both move. The (icon + value) groups are distributed across the row by
-    // alignment — first left, last right, any middle one centered — within symmetric BodyInsetX padding.
+    // the same shape — tune here and both move. The (icon + value) groups are packed together and the whole
+    // cluster is right-aligned to the section's right padding (BodyInsetX), with GroupGap between each group.
     public const float IconSize = 26f;
     public const float IconValueGap = 4f;   // gap between an icon and its value text
     public const float IconOffsetY = 2f;     // nudge the icon down to sit on the value text's baseline
@@ -37,13 +37,12 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
     public const uint BodyFontSize = 12;
 
     // The block is headerless (no title/divider), so add a little top padding to separate the row from the
-    // section above it. Shared with the editor preview's BuildCondition.
-    public const float TopPad = 8f;
+    // section above it. Shared with the editor preview's BuildCondition. Kept small so it doesn't compound with
+    // the previous section's bottom padding into a large gap (e.g. below Possessions).
+    public const float TopPad = 2f;
 
-    // With only two entries (e.g. an unsellable item — no sell price), pull them in from the edges so they sit
-    // nearer the center rather than at the far corners. Falls back to BodyInsetX on a tooltip too narrow to
-    // hold it.
-    public const float TwoEntryEdgePad = 100f;
+    // Spacing between adjacent (icon + value) groups in the right-aligned cluster.
+    public const float GroupGap = 20f;
 
     private const float BlockBottomPad = 6f; // breathing room below the block
 
@@ -142,32 +141,32 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
             var block = _block!;
             Hide(); // keep hidden while we measure
 
-            // Distribute the (icon + value) groups across the row by alignment: the first sits at the left
-            // padding, the last at the right padding, and any middle one is centered — within symmetric
-            // BodyInsetX padding on both sides. Measuring each value unscaled (the live addon renders at the
-            // user's UI scale, but our coordinates are node-local — same reasoning as the unified-materia
-            // block's right-alignment measure) gives the group width needed to right-align / center it.
+            // Right-align the whole cluster of (icon + value) groups to the section's right padding
+            // (BodyInsetX), packed together with GroupGap between each. Measure each value unscaled (the live
+            // addon renders at the user's UI scale, but our coordinates are node-local — same reasoning as the
+            // unified-materia block's right-alignment measure) to get each group's width, sum them to find the
+            // cluster's left start, then lay out left-to-right (order preserved: durability, spiritbond, sell).
             var y = block.BodyTop + TopPad;
             var count = entries.Count;
-            var edge = count == 2 && width - 2f * TwoEntryEdgePad >= 80f
-                ? TwoEntryEdgePad
-                : TooltipContentBlock.BodyInsetX;
-            var leftEdge = edge;
-            var rightEdge = width - edge;
-            var span = rightEdge - leftEdge;
+            var rightEdge = width - TooltipContentBlock.BodyInsetX;
+
+            var groupWidths = new float[count];
+            var total = 0f;
+            for (var i = 0; i < count; i++)
+            {
+                var (_, value) = GetOrCreate(i);
+                value.String = entries[i].Value;
+                var textW = value.GetTextDrawSize(entries[i].Value, considerScale: false).X;
+                groupWidths[i] = IconSize + IconValueGap + textW;
+                total += groupWidths[i];
+            }
+            total += (count - 1) * GroupGap;
+
+            var groupX = rightEdge - total;
             for (var i = 0; i < count; i++)
             {
                 var entry = entries[i];
                 var (icon, value) = GetOrCreate(i);
-
-                value.String = entry.Value;
-                var textW = value.GetTextDrawSize(entry.Value, considerScale: false).X;
-                var groupW = IconSize + IconValueGap + textW;
-
-                float groupX;
-                if (i == 0) groupX = leftEdge;                          // first → left-align
-                else if (i == count - 1) groupX = rightEdge - groupW;   // last → right-align
-                else groupX = leftEdge + (span - groupW) / 2f;          // middle → center-align
 
                 icon.IconId = entry.IconId;
                 icon.Size = new Vector2(IconSize, IconSize);
@@ -176,6 +175,8 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
 
                 value.Position = new Vector2(groupX + IconSize + IconValueGap, y + (RowHeight - BodyFontSize) / 2f);
                 value.IsVisible = true;
+
+                groupX += groupWidths[i] + GroupGap;
             }
 
             for (var i = entries.Count; i < _icons.Count; i++)

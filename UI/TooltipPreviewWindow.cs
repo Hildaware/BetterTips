@@ -432,20 +432,18 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         var entries = _sample.ConditionSample.Entries();
         var y = card.BodyTop + ConditionBlockProvider.TopPad;
         var count = entries.Count;
-        var edge = count == 2 && width - 2f * ConditionBlockProvider.TwoEntryEdgePad >= 80f
-            ? ConditionBlockProvider.TwoEntryEdgePad
-            : TooltipContentBlock.BodyInsetX;
-        var leftEdge = edge;
-        var rightEdge = width - edge;
-        var span = rightEdge - leftEdge;
+        var rightEdge = width - TooltipContentBlock.BodyInsetX;
 
+        // Build the value nodes + measure each group, then right-align the whole cluster (mirrors the live
+        // ConditionBlockProvider layout via its shared consts).
+        var values = new TextNode[count];
+        var groupWidths = new float[count];
+        var total = 0f;
         for (var i = 0; i < count; i++)
         {
-            var entry = entries[i];
-
             var value = new TextNode
             {
-                String = entry.Value,
+                String = entries[i].Value,
                 FontType = FontType.Axis,
                 FontSize = ConditionBlockProvider.BodyFontSize,
                 AlignmentType = AlignmentType.TopLeft,
@@ -454,19 +452,21 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
                 TextFlags = TextFlags.AutoAdjustNodeSize
             };
             value.AttachNode(card);
+            values[i] = value;
 
-            var textW = value.GetTextDrawSize(entry.Value, considerScale: false).X;
-            var groupW = ConditionBlockProvider.IconSize + ConditionBlockProvider.IconValueGap + textW;
+            var textW = value.GetTextDrawSize(entries[i].Value, considerScale: false).X;
+            groupWidths[i] = ConditionBlockProvider.IconSize + ConditionBlockProvider.IconValueGap + textW;
+            total += groupWidths[i];
+        }
+        total += (count - 1) * ConditionBlockProvider.GroupGap;
 
-            float groupX;
-            if (i == 0) groupX = leftEdge;                          // first → left-align
-            else if (i == count - 1) groupX = rightEdge - groupW;   // last → right-align
-            else groupX = leftEdge + (span - groupW) / 2f;          // middle → center-align
-
+        var groupX = rightEdge - total;
+        for (var i = 0; i < count; i++)
+        {
             var icon = new IconImageNode
             {
                 FitTexture = true,
-                IconId = entry.IconId,
+                IconId = entries[i].IconId,
                 Size = new Vector2(ConditionBlockProvider.IconSize, ConditionBlockProvider.IconSize),
                 Position = new Vector2(groupX,
                     y + (ConditionBlockProvider.RowHeight - ConditionBlockProvider.IconSize) / 2f
@@ -474,8 +474,11 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
             };
             icon.AttachNode(card);
 
-            value.Position = new Vector2(groupX + ConditionBlockProvider.IconSize + ConditionBlockProvider.IconValueGap,
+            values[i].Position = new Vector2(
+                groupX + ConditionBlockProvider.IconSize + ConditionBlockProvider.IconValueGap,
                 y + (ConditionBlockProvider.RowHeight - ConditionBlockProvider.BodyFontSize) / 2f);
+
+            groupX += groupWidths[i] + ConditionBlockProvider.GroupGap;
         }
 
         return ConditionBlockProvider.TopPad + ConditionBlockProvider.RowHeight;

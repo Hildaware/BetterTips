@@ -47,21 +47,38 @@ public sealed record ConditionData(string? Durability, string? Spiritbond, strin
     {
         if (addon is null) return null;
 
-        var durability = ReadGaugeValue(addon->ConditionGroup, addon->ConditionValue);
-        var spiritbond = ReadGaugeValue(addon->SpiritbondGroup, addon->SpiritbondValue);
+        string? durability = null, spiritbond = null, sellPrice = null;
 
-        string? sellPrice = null;
         var hovered = gameGui.HoveredItem;
         if (hovered != 0)
         {
             var itemId = (uint)(hovered >= 1_000_000 ? hovered - 1_000_000 : hovered);
-            if (data.GetExcelSheet<Item>().TryGetRow(itemId, out var item) && item.PriceLow > 0)
-                sellPrice = item.PriceLow.ToString("N0");
+            if (data.GetExcelSheet<Item>().TryGetRow(itemId, out var item))
+            {
+                if (item.PriceLow > 0)
+                    sellPrice = item.PriceLow.ToString("N0") + "g"; // g = gil
+
+                // Durability/spiritbond only exist on equippable gear (weapons, armour, accessories, tools).
+                // Gate on Lumina, NOT on the rendered gauge's visibility: the relayout hides the gauge block
+                // (#7) and the game doesn't re-hide its child groups for a non-gear item, so a Triple Triad
+                // card / material / consumable would otherwise inherit the previous gear's stale gauge value.
+                // Soul crystals are equippable but have no durability, so exclude them.
+                if (HasDurability(item))
+                {
+                    durability = ReadGaugeValue(addon->ConditionGroup, addon->ConditionValue);
+                    spiritbond = ReadGaugeValue(addon->SpiritbondGroup, addon->SpiritbondValue);
+                }
+            }
         }
 
         var result = new ConditionData(durability, spiritbond, sellPrice);
         return result.HasContent ? result : null;
     }
+
+    /// <summary>Whether the item is durability-bearing gear: equippable (has an equip slot) but not a soul
+    /// crystal (which is equippable yet has no durability/spiritbond).</summary>
+    private static bool HasDurability(Item item)
+        => item.EquipSlotCategory.RowId != 0 && item.EquipSlotCategory.Value.SoulCrystal == 0;
 
     /// <summary>Read a gauge's value text, but only when its group is actually visible for this item (so a
     /// stale value left in the node from a previously-hovered durability item can't surface here). Guarded —

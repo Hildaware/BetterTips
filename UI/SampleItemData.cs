@@ -58,7 +58,7 @@ public sealed class SampleItemData
         Rarity = 2;
         _body = new Dictionary<LayoutSection, Row[]>();
         UnifiedBonuses = new UnifiedBonusesData([], []);
-        ConditionSample = new ConditionData("100%", "0%", "12,345");
+        ConditionSample = new ConditionData("100%", "0%", "12,345g");
         OwnershipSample = SampleOwnership;
     }
 
@@ -245,7 +245,7 @@ public sealed class SampleItemData
         // The Condition section: representative durability/spiritbond (per-instance live) + the item's real
         // sell price.
         var condition = new ConditionData("100%", "0%",
-            item.PriceLow > 0 ? item.PriceLow.ToString("N0") : null);
+            item.PriceLow > 0 ? item.PriceLow.ToString("N0") + "g" : null);
 
         return new SampleItemData(
             item.Name.ToString(),

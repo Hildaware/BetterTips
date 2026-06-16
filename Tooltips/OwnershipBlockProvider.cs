@@ -36,7 +36,8 @@ public sealed unsafe class OwnershipBlockProvider : IDisposable
     public const float StatusIconSize = 20f; // trailing status icon (e.g. the "collected" checkmark)
     public const uint BodyFontSize = 12;
 
-    private const float BlockBottomPad = 6f; // breathing room below the block
+    private const float BlockBottomPad = 2f; // breathing room below the block (kept small so the gap to the
+                                             // next section — e.g. Condition — stays tight)
 
     public const string HeaderLabel = "Possessions";
 
