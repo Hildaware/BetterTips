@@ -38,6 +38,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly TooltipPreviewWindow _previewWindow;
     private readonly GearSetBlockProvider _gearSet;
     private readonly UnifiedHeaderBlockProvider _unifiedHeader;
+    private readonly NonEquipHeaderBlockProvider _nonEquipHeader;
+    private readonly EffectsBlockProvider _effects;
     private readonly UnifiedBonusesBlockProvider _unifiedBonuses;
     private readonly GlamourBlockProvider _glamour;
     private readonly ConditionBlockProvider _condition;
@@ -158,9 +160,12 @@ public sealed class Plugin : IDalamudPlugin
         // The glamoured-appearance name isn't rendered to any node, so the string hook reads it from the
         // tooltip's string array into this shared carrier, which the glamour block then renders.
         var glamourSource = new GlamourSource();
+        var effectsSource = new EffectsSource();
 
         _gearSet = new GearSetBlockProvider(addonLifecycle, gameGui, config, new GearSetIndex(), log);
         _unifiedHeader = new UnifiedHeaderBlockProvider(addonLifecycle, gameGui, dataManager, objectTable, config, log);
+        _nonEquipHeader = new NonEquipHeaderBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
+        _effects = new EffectsBlockProvider(addonLifecycle, gameGui, effectsSource, config, log);
         _unifiedBonuses = new UnifiedBonusesBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
         _glamour = new GlamourBlockProvider(addonLifecycle, gameGui, dataManager, glamourSource, config, log);
         _condition = new ConditionBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
@@ -178,11 +183,11 @@ public sealed class Plugin : IDalamudPlugin
 
         // Primary path: the signature-free single-pass relayout (hide + reorder + gear-set + unified header +
         // unified bonuses/materia + glamour + condition + ownership).
-        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet, _unifiedHeader, _unifiedBonuses, _glamour, _condition, _description, _ownership);
+        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet, _unifiedHeader, _unifiedBonuses, _glamour, _condition, _description, _ownership, _nonEquipHeader, _effects);
         // Fallback/enhancement: a signature hook that blanks text-only lines for the cleanest collapse, and
         // snapshots the glamour name for the glamour block. Only active if the signature resolves; otherwise
         // it self-disables to a harmless no-op (the glamour name is then unavailable, but dyes still scrape).
-        _stringHook = new ItemTooltipModifier(interopProvider, config, glamourSource, log);
+        _stringHook = new ItemTooltipModifier(interopProvider, config, glamourSource, effectsSource, log);
 
         // Persisting + rebuilding both paths is funneled through one guarded callback so a save failure
         // (e.g. disk error) can never escape into the UI draw loop.
@@ -279,6 +284,8 @@ public sealed class Plugin : IDalamudPlugin
         _relayout.Dispose();
         _gearSet.Dispose();
         _unifiedHeader.Dispose();
+        _nonEquipHeader.Dispose();
+        _effects.Dispose();
         _unifiedBonuses.Dispose();
         _glamour.Dispose();
         _condition.Dispose();

@@ -58,6 +58,15 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // re-anchored below it instead of below the header.
     private readonly UnifiedHeaderBlockProvider _unified;
 
+    // Owns/draws the non-equipment item header (consumables/materials/cards). Mutually exclusive with the
+    // unified gear header — only one engages per hover. When active it replaces the native name/icon/category.
+    private readonly NonEquipHeaderBlockProvider _nonEquip;
+
+    // Owns/draws BetterTips' Enhanced-only "Effects" section (green-numbered food/potion effect lines). Laid
+    // out at the EnhancedEffects slot (above Description); scrapes the native Effects block (#49), which is
+    // hidden in Enhanced mode.
+    private readonly EffectsBlockProvider _effects;
+
     // Owns/draws the "Unified bonuses & materia" block (the UnifiedBonusesMateria enhancement). When active it
     // replaces the native Bonuses (#97) and Materia (#93) blocks, laid out at the Bonuses slot in the order.
     private readonly UnifiedBonusesBlockProvider _bonuses;
@@ -101,6 +110,10 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     private float _planGearY;
     private bool _planShowUnified;
     private float _planUnifiedY;
+    private bool _planShowNonEquip;
+    private float _planNonEquipY;
+    private bool _planShowEffects;
+    private float _planEffectsY;
     private bool _planShowBonuses;
     private float _planBonusesY;
     private bool _planShowGlamour;
@@ -152,7 +165,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     public TooltipRelayoutController(IAddonLifecycle addonLifecycle, IGameGui gameGui,
         Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet,
         UnifiedHeaderBlockProvider unified, UnifiedBonusesBlockProvider bonuses, GlamourBlockProvider glamour,
-        ConditionBlockProvider condition, DescriptionBlockProvider description, OwnershipBlockProvider ownership)
+        ConditionBlockProvider condition, DescriptionBlockProvider description, OwnershipBlockProvider ownership,
+        NonEquipHeaderBlockProvider nonEquip, EffectsBlockProvider effects)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
@@ -165,6 +179,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _condition = condition;
         _description = description;
         _ownership = ownership;
+        _nonEquip = nonEquip;
+        _effects = effects;
         Rebuild();
 
         // Compute the plan when the game updates the tooltip's content...
@@ -324,6 +340,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _condition.Hide();
             _description.Hide();
             _ownership.Hide();
+            _nonEquip.Hide();
+            _effects.Hide();
             return;
         }
 
@@ -337,9 +355,24 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _lastHovered = hovered;
             _prevIncluded.Clear();
             _transientSkips = 0;
-            // New item: its own refresh governs natural visibility, so drop our applied-hide tracking WITHOUT
-            // re-showing (re-showing could fight the game's per-item hiding — e.g. an empty Damage block on a
-            // non-gear item).
+
+            // The native header name/icon/category/quantity (#32-#35) are always-visible UI; the unified
+            // header only suppresses them for gear. The game doesn't re-show nodes we toggled off, so on a new
+            // item — especially gear → non-gear — explicitly re-show them, or the previous (gear) item's hidden
+            // icon/name would persist on a non-equippable hover (the bug). We do this ONLY for these
+            // always-visible header nodes: other suppressed blocks (the gauge #7, damage #36, item level #62)
+            // are game-managed per item, so force-showing them here would surface an empty block on a non-gear
+            // item — those are left to the normal re-decide.
+            foreach (var id in TooltipLayout.UnifiedHeaderHiddenNodeIds)
+            {
+                var node = addon->GetNodeById(id);
+                if (node is not null && (node->NodeFlags & NodeFlags.Visible) == 0)
+                    node->ToggleVisibility(true);
+            }
+
+            // The new item's own refresh governs natural visibility for everything else, so drop our
+            // applied-hide tracking WITHOUT re-showing the rest (re-showing the game-managed blocks would fight
+            // its per-item hiding).
             _appliedHideIds.Clear();
             _appliedGroups.Clear();
         }
@@ -363,6 +396,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planBlocks.Clear();
         _planShowGear = false;
         _planShowUnified = false;
+        _planShowNonEquip = false;
+        _planShowEffects = false;
         _planShowBonuses = false;
         _planShowGlamour = false;
         _planShowCondition = false;
@@ -376,6 +411,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         // measure BEFORE the hides below. (The description block reads Lumina, so order doesn't matter for it.)
         var gearWants = _gearSet.TryMeasure(addon, root->Width, out var gearHeight);
         var unifiedWants = _unified.TryMeasure(addon, root->Width, out var unifiedHeight);
+        var nonEquipWants = _nonEquip.TryMeasure(addon, root->Width, out var nonEquipHeight);
+        var effectsWants = _effects.TryMeasure(addon, root->Width, out var effectsHeight);
         var bonusesWants = _bonuses.TryMeasure(addon, root->Width, out var bonusesHeight);
         var glamourWants = _glamour.TryMeasure(addon, root->Width, out var glamourHeight);
         var conditionWants = _condition.TryMeasure(addon, root->Width, out var conditionHeight);
@@ -389,8 +426,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
         // Do no harm when idle: nothing configured to change → leave the game's layout pristine (no plan).
         // Restore anything a prior (now-removed) customization left applied to this same item first.
-        if (!hasHides && !_reorderActive && !gearWants && !unifiedWants && !bonusesWants && !glamourWants &&
-            !conditionWants && !descriptionWants && !ownershipWants)
+        if (!hasHides && !_reorderActive && !gearWants && !unifiedWants && !nonEquipWants && !bonusesWants &&
+            !glamourWants && !conditionWants && !descriptionWants && !ownershipWants && !effectsWants)
         {
             RestorePrevious(addon);
             _prevIncluded.Clear();
@@ -426,9 +463,28 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             // The durability/spiritbond gauge bars (#7) are hidden below — the redesigned header has no place
             // for them and the Condition section is their new home — so there's nothing to position here.
         }
+        else if (nonEquipWants)
+        {
+            // Non-equippable item: our non-equip header replaces the native name/icon/category, anchored below
+            // the kept binding line just like the gear header. (Mutually exclusive with unifiedWants.)
+            var header = addon->GetNodeById(TooltipLayout.HeaderBlockId);
+            var headerY = header is not null ? (float)header->Y : 0f;
+            var binding = addon->GetNodeById(TooltipLayout.BindingLineBlockId);
+            var blockTop = binding is not null && (binding->NodeFlags & NodeFlags.Visible) != 0
+                ? binding->Y + binding->Height + 4f
+                : 6f;
+
+            _unified.Hide();
+            _nonEquip.PlaceAt(blockTop);
+            _nonEquip.Show();
+            _planShowNonEquip = true;
+            _planNonEquipY = blockTop;
+            anchorTop = headerY + blockTop + nonEquipHeight;
+        }
         else
         {
             _unified.Hide();
+            _nonEquip.Hide();
             anchorTop = ComputeAnchorTop(addon, rootId, frame);
             if (anchorTop < 0f)
                 return; // can't resolve a stable anchor (UI patch shifted ids) → bail, no plan
@@ -496,6 +552,17 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                         _planHideIds.Add(id);
                     }
         }
+
+        // The non-equipment header replaces the native name/icon/category/quantity (#32-#35) too — only when
+        // it's actually showing. (Damage/Item Level don't exist for non-gear; in Enhanced mode they're hidden
+        // globally via EnhancedHiddenBlockIds anyway.)
+        if (nonEquipWants)
+            foreach (var id in TooltipLayout.UnifiedHeaderHiddenNodeIds)
+            {
+                var node = addon->GetNodeById(id);
+                if (node is not null) node->ToggleVisibility(false);
+                _planHideIds.Add(id);
+            }
 
         // The Unified bonuses & materia block: hide the native Bonuses (#97) and Materia (#93) blocks it folds
         // in — only when our block is actually showing. Our block is then inserted at the Bonuses slot below.
@@ -576,6 +643,14 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                     _planOwnershipY = y;
                     y += ownershipHeight;
                 }
+                else if (id == LayoutSection.EnhancedEffects && effectsWants)
+                {
+                    _effects.PlaceAt(y);
+                    _effects.Show();
+                    _planShowEffects = true;
+                    _planEffectsY = y;
+                    y += effectsHeight;
+                }
 
                 continue;
             }
@@ -655,6 +730,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planBlocks.Clear();
         _planShowGear = false;
         _planShowUnified = false;
+        _planShowNonEquip = false;
+        _planShowEffects = false;
         _planShowBonuses = false;
         _planShowGlamour = false;
         _planShowCondition = false;
@@ -764,6 +841,28 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         else
         {
             _unified.Hide();
+        }
+
+        // Non-equipment header block.
+        if (_planShowNonEquip)
+        {
+            _nonEquip.PlaceAt(_planNonEquipY);
+            _nonEquip.Show();
+        }
+        else
+        {
+            _nonEquip.Hide();
+        }
+
+        // Effects block.
+        if (_planShowEffects)
+        {
+            _effects.PlaceAt(_planEffectsY);
+            _effects.Show();
+        }
+        else
+        {
+            _effects.Hide();
         }
 
         // Unified bonuses & materia block.

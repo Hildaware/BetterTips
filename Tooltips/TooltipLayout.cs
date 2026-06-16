@@ -46,7 +46,13 @@ public enum LayoutSection
     // where the hovered item is already in the player's possession (owned count + location, Glamour Dresser,
     // Armoire, and whether its mount/minion/Triple Triad card is unlocked). Live game state read via the
     // shared FfxivCollections library. Append-only.
-    Ownership
+    Ownership,
+
+    // BetterTips' own Enhanced-only "Effects" section — a headerless, tight render of the item's effect lines
+    // (food/potion) with numbers coloured green, scraped from the native Effects block (#49, which Enhanced
+    // hides). Distinct from the native LayoutSection.Effects. Positioned specially, above Description.
+    // Append-only.
+    EnhancedEffects
 }
 
 /// <summary>Display label + the block node id(s) a <see cref="LayoutSection" /> moves as a unit.</summary>
@@ -154,7 +160,7 @@ public static class TooltipLayout
     /// <summary>Our own non-native sections (positioned by their controllers, not the reorder pass).</summary>
     public static bool IsCustom(LayoutSection id)
         => id is LayoutSection.GearSets or LayoutSection.Glamour or LayoutSection.Condition
-            or LayoutSection.EnhancedDescription or LayoutSection.Ownership;
+            or LayoutSection.EnhancedDescription or LayoutSection.Ownership or LayoutSection.EnhancedEffects;
 
     /// <summary>
     ///     The fixed body order of the <b>Enhanced</b> tooltip (used when
@@ -166,8 +172,8 @@ public static class TooltipLayout
     /// </summary>
     public static readonly LayoutSection[] EnhancedBodyOrder =
     [
-        LayoutSection.AttributeBonuses, LayoutSection.EnhancedDescription, LayoutSection.Glamour,
-        LayoutSection.GearSets, LayoutSection.Ownership, LayoutSection.Condition
+        LayoutSection.AttributeBonuses, LayoutSection.EnhancedEffects, LayoutSection.EnhancedDescription,
+        LayoutSection.Glamour, LayoutSection.GearSets, LayoutSection.Ownership, LayoutSection.Condition
     ];
 
     /// <summary>
@@ -177,7 +183,9 @@ public static class TooltipLayout
     ///     Bonuses (<c>#97</c>), Materia (<c>#93</c>), Effects (<c>#49</c>), Crafting &amp; Repairs (<c>#68</c>),
     ///     Vendor/Market (<c>#43</c>,<c>#47</c>), Requirements (<c>#53</c>), Crafter Signature (<c>#4</c>). The
     ///     native header name/icon/category sub-nodes are <b>not</b> here — the unified header hides those itself
-    ///     (only when it shows), so a non-equippable hover keeps its native name.
+    ///     (only when it shows), so a non-equippable hover keeps its native name. The native Effects block
+    ///     (<c>#49</c>) is hidden here, but our own <see cref="LayoutSection.EnhancedEffects" /> section scrapes
+    ///     it (before this hide) and re-renders it above Description with green numbers.
     /// </summary>
     public static readonly uint[] EnhancedHiddenBlockIds = [36, 62, 40, 97, 93, 49, 68, 43, 47, 53, 4];
 

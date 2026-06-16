@@ -34,6 +34,7 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
 
     private readonly Configuration.Configuration _config;
     private readonly GlamourSource _glamour;
+    private readonly EffectsSource _effects;
     private readonly IPluginLog _log;
     private readonly Hook<GenerateItemTooltipDelegate>? _hook;
 
@@ -45,10 +46,11 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
     private volatile bool _dumpRequested;
 
     public ItemTooltipModifier(IGameInteropProvider interop, Configuration.Configuration config,
-        GlamourSource glamour, IPluginLog log)
+        GlamourSource glamour, EffectsSource effects, IPluginLog log)
     {
         _config = config;
         _glamour = glamour;
+        _effects = effects;
         _log = log;
         Rebuild();
 
@@ -108,6 +110,10 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
                 // way to read it) for the Glamour section. Captured unconditionally — the provider gates on
                 // the config — and it's the raw string array, so payload glyphs are preserved.
                 _glamour.Capture(stringArrayData);
+
+                // Snapshot the effect lines for the (Enhanced) Effects section — same reason as glamour: the
+                // string array has real newlines the rendered node loses.
+                _effects.Capture(stringArrayData);
             }
             catch (Exception ex)
             {
