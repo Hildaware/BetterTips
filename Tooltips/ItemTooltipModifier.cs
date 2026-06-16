@@ -35,6 +35,7 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
     private readonly Configuration.Configuration _config;
     private readonly GlamourSource _glamour;
     private readonly EffectsSource _effects;
+    private readonly TooltipStrings _strings;
     private readonly IPluginLog _log;
     private readonly Hook<GenerateItemTooltipDelegate>? _hook;
 
@@ -46,11 +47,12 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
     private volatile bool _dumpRequested;
 
     public ItemTooltipModifier(IGameInteropProvider interop, Configuration.Configuration config,
-        GlamourSource glamour, EffectsSource effects, IPluginLog log)
+        GlamourSource glamour, EffectsSource effects, TooltipStrings strings, IPluginLog log)
     {
         _config = config;
         _glamour = glamour;
         _effects = effects;
+        _strings = strings;
         _log = log;
         Rebuild();
 
@@ -114,6 +116,10 @@ public sealed unsafe class ItemTooltipModifier : IDisposable
                 // Snapshot the effect lines for the (Enhanced) Effects section — same reason as glamour: the
                 // string array has real newlines the rendered node loses.
                 _effects.Capture(stringArrayData);
+
+                // Snapshot all slots for the unified header/bonuses to read the rendered (per-hover scaled)
+                // item level, primary stat, and attributes — so level-syncing items show correct values.
+                _strings.Capture(stringArrayData);
             }
             catch (Exception ex)
             {

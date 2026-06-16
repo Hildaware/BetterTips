@@ -77,7 +77,8 @@ public sealed record UnifiedBonusesData(
     ///     Attribute bonuses come from Lumina; melded materia is scraped from <paramref name="addon" />'s
     ///     native materia block (which must still be populated — call before the relayout hides it).
     /// </summary>
-    public static unsafe UnifiedBonusesData? FromHoveredItem(IGameGui gameGui, IDataManager data, AddonItemDetail* addon)
+    public static unsafe UnifiedBonusesData? FromHoveredItem(IGameGui gameGui, IDataManager data,
+        AddonItemDetail* addon, TooltipStrings strings)
     {
         var hovered = gameGui.HoveredItem;
         if (hovered == 0) return null;
@@ -88,11 +89,34 @@ public sealed record UnifiedBonusesData(
         // Gear only — consumables/materials keep their native sections.
         if (item.EquipSlotCategory.RowId == 0) return null;
 
-        var bonuses = ReadBonuses(item);
+        // Prefer the rendered bonuses (the game scales them per hover, so level-syncing gear is correct); fall
+        // back to the Lumina sheet when the string hook is unavailable.
+        var bonuses = ReadRenderedBonuses(strings);
+        if (bonuses.Count == 0) bonuses = ReadBonuses(item);
+
         var materia = ScrapeMateria(addon, data);
 
         var result = new UnifiedBonusesData(bonuses, materia);
         return result.HasContent ? result : null;
+    }
+
+    /// <summary>The attribute bonuses as the game rendered them (the scaled values), read from the tooltip
+    /// string array — each slot is a "Name +Value" line. Grouped green → pink → gold (stable within group).</summary>
+    private static List<BonusEntry> ReadRenderedBonuses(TooltipStrings strings)
+    {
+        var entries = new List<BonusEntry>();
+        for (var i = TooltipStrings.BonusesStartIndex; i <= TooltipStrings.BonusesEndIndex; i++)
+        {
+            var line = strings.Get(i);
+            if (string.IsNullOrWhiteSpace(line)) break; // bonuses are contiguous; stop at the first empty slot
+
+            var m = StatLine.Match(line);
+            if (!m.Success) continue;
+            var name = m.Groups["name"].Value.Trim();
+            entries.Add(new BonusEntry(name, "+" + m.Groups["value"].Value, Classify(name)));
+        }
+
+        return entries.OrderBy(e => (int)e.Color).ToList();
     }
 
     /// <summary>The attribute bonuses from the item sheet, sorted into the green → pink → gold grouping the

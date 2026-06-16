@@ -58,7 +58,8 @@ public sealed record UnifiedHeaderData(
     ///     Build the data for the currently hovered item, or <c>null</c> when nothing resolvable is hovered.
     ///     Mirrors <c>GearSetBlockProvider</c>'s HQ-offset handling.
     /// </summary>
-    public static unsafe UnifiedHeaderData? FromHoveredItem(IGameGui gameGui, IDataManager data, IObjectTable objects)
+    public static unsafe UnifiedHeaderData? FromHoveredItem(IGameGui gameGui, IDataManager data,
+        IObjectTable objects, TooltipStrings strings)
     {
         var hovered = gameGui.HoveredItem;
         if (hovered == 0) return null;
@@ -69,7 +70,6 @@ public sealed record UnifiedHeaderData(
         // Only equippable items get the unified (gear-style) header; consumables/materials keep the native one.
         if (item.EquipSlotCategory.RowId == 0) return null;
 
-        var (label, value) = PrimaryStat(item);
         var category = item.ClassJobCategory.Value;
 
         var playerState = PlayerState.Instance();
@@ -79,14 +79,20 @@ public sealed record UnifiedHeaderData(
         var currentLevel = objects.LocalPlayer?.Level ?? 0;
         var meetsLevel = currentLevel == 0 || item.LevelEquip <= currentLevel;
 
+        // Prefer the rendered (per-hover scaled) values so level-syncing items (e.g. Azeyma's Earrings) show
+        // their actual item level / stats; fall back to the Lumina sheet when the string hook is unavailable.
+        var (label, value) = RenderedPrimary(strings) ?? PrimaryStat(item);
+        var itemLevel = ParseTrailingUint(strings.Get(TooltipStrings.ItemLevelIndex)) ?? item.LevelItem.RowId;
+        var reqLevel = ParseTrailingUint(strings.Get(TooltipStrings.RequiredLevelIndex)) ?? item.LevelEquip;
+
         return new UnifiedHeaderData(
             item.Name.ToString(),
             item.Icon,
             item.ItemUICategory.Value.Name.ToString(),
             value,
             label,
-            item.LevelItem.RowId,
-            item.LevelEquip,
+            itemLevel,
+            reqLevel,
             ResolveJobIcons(category),
             category.Name.ToString(),
             item.Rarity,
@@ -95,8 +101,28 @@ public sealed record UnifiedHeaderData(
             meetsLevel);
     }
 
-    /// <summary>The big primary stat: weapons show the higher of Physical/Magic damage, armor the higher of
-    /// Physical/Magic defense; anything else has none.</summary>
+    /// <summary>The big primary stat as the game rendered it (the scaled value) — the higher of the two
+    /// damage/defense columns in the string array — or <c>null</c> if neither is present (fall back to Lumina).</summary>
+    private static (string Label, string Value)? RenderedPrimary(TooltipStrings strings)
+    {
+        var la = strings.Get(TooltipStrings.PrimaryLabelAIndex).Trim();
+        var va = strings.Get(TooltipStrings.PrimaryValueAIndex).Trim();
+        var lb = strings.Get(TooltipStrings.PrimaryLabelBIndex).Trim();
+        var vb = strings.Get(TooltipStrings.PrimaryValueBIndex).Trim();
+
+        var hasA = la.Length > 0 && va.Length > 0;
+        var hasB = lb.Length > 0 && vb.Length > 0;
+        if (!hasA && !hasB) return null;
+        if (!hasB) return (la, va);
+        if (!hasA) return (lb, vb);
+
+        int.TryParse(va, out var na);
+        int.TryParse(vb, out var nb);
+        return na >= nb ? (la, va) : (lb, vb);
+    }
+
+    /// <summary>The big primary stat from Lumina (fallback): weapons show the higher of Physical/Magic damage,
+    /// armor the higher of Physical/Magic defense; anything else has none.</summary>
     private static (string Label, string Value) PrimaryStat(Item item)
     {
         if (item.DamagePhys > 0 || item.DamageMag > 0)
@@ -110,6 +136,16 @@ public sealed record UnifiedHeaderData(
                 : ("Defense", item.DefensePhys.ToString());
 
         return (string.Empty, string.Empty);
+    }
+
+    /// <summary>Parse the trailing integer of a string like "Item Level 560" / "Lv. 1", or <c>null</c>.</summary>
+    private static uint? ParseTrailingUint(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var token = text.Trim();
+        var space = token.LastIndexOf(' ');
+        if (space >= 0) token = token[(space + 1)..];
+        return uint.TryParse(token, out var n) ? n : null;
     }
 
     /// <summary>

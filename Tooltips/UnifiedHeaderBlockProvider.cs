@@ -33,6 +33,7 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
     private readonly IGameGui _gameGui;
     private readonly IDataManager _data;
     private readonly IObjectTable _objects;
+    private readonly TooltipStrings _strings;
     private readonly Configuration.Configuration _config;
     private readonly IPluginLog _log;
 
@@ -43,12 +44,13 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
     private float _lastHeight;
 
     public UnifiedHeaderBlockProvider(IAddonLifecycle addonLifecycle, IGameGui gameGui, IDataManager data,
-        IObjectTable objects, Configuration.Configuration config, IPluginLog log)
+        IObjectTable objects, TooltipStrings strings, Configuration.Configuration config, IPluginLog log)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
         _data = data;
         _objects = objects;
+        _strings = strings;
         _config = config;
         _log = log;
 
@@ -76,7 +78,7 @@ public sealed unsafe class UnifiedHeaderBlockProvider : IDisposable
                 return false;
             }
 
-            var data = UnifiedHeaderData.FromHoveredItem(_gameGui, _data, _objects);
+            var data = UnifiedHeaderData.FromHoveredItem(_gameGui, _data, _objects, _strings);
             if (data is null)
             {
                 Hide();

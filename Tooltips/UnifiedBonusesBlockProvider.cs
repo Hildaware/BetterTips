@@ -34,6 +34,7 @@ public sealed unsafe class UnifiedBonusesBlockProvider : IDisposable
     private readonly IAddonLifecycle _addonLifecycle;
     private readonly IGameGui _gameGui;
     private readonly IDataManager _data;
+    private readonly TooltipStrings _strings;
     private readonly Configuration.Configuration _config;
     private readonly IPluginLog _log;
 
@@ -50,11 +51,12 @@ public sealed unsafe class UnifiedBonusesBlockProvider : IDisposable
     private IReadOnlyList<MateriaEntry> _cachedMateria = [];
 
     public UnifiedBonusesBlockProvider(IAddonLifecycle addonLifecycle, IGameGui gameGui, IDataManager data,
-        Configuration.Configuration config, IPluginLog log)
+        TooltipStrings strings, Configuration.Configuration config, IPluginLog log)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
         _data = data;
+        _strings = strings;
         _config = config;
         _log = log;
 
@@ -84,7 +86,7 @@ public sealed unsafe class UnifiedBonusesBlockProvider : IDisposable
                 return false;
             }
 
-            var data = UnifiedBonusesData.FromHoveredItem(_gameGui, _data, addon);
+            var data = UnifiedBonusesData.FromHoveredItem(_gameGui, _data, addon, _strings);
             if (data is null)
             {
                 Hide();

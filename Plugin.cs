@@ -161,12 +161,15 @@ public sealed class Plugin : IDalamudPlugin
         // tooltip's string array into this shared carrier, which the glamour block then renders.
         var glamourSource = new GlamourSource();
         var effectsSource = new EffectsSource();
+        // Rendered tooltip strings (scaled item level / primary stat / attributes) for the unified header +
+        // bonuses, so level-syncing items show correct values; the hook fills it, the blocks read it.
+        var tooltipStrings = new TooltipStrings();
 
         _gearSet = new GearSetBlockProvider(addonLifecycle, gameGui, config, new GearSetIndex(), log);
-        _unifiedHeader = new UnifiedHeaderBlockProvider(addonLifecycle, gameGui, dataManager, objectTable, config, log);
+        _unifiedHeader = new UnifiedHeaderBlockProvider(addonLifecycle, gameGui, dataManager, objectTable, tooltipStrings, config, log);
         _nonEquipHeader = new NonEquipHeaderBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
         _effects = new EffectsBlockProvider(addonLifecycle, gameGui, effectsSource, config, log);
-        _unifiedBonuses = new UnifiedBonusesBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
+        _unifiedBonuses = new UnifiedBonusesBlockProvider(addonLifecycle, gameGui, dataManager, tooltipStrings, config, log);
         _glamour = new GlamourBlockProvider(addonLifecycle, gameGui, dataManager, glamourSource, config, log);
         _condition = new ConditionBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
         _description = new DescriptionBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
@@ -187,7 +190,7 @@ public sealed class Plugin : IDalamudPlugin
         // Fallback/enhancement: a signature hook that blanks text-only lines for the cleanest collapse, and
         // snapshots the glamour name for the glamour block. Only active if the signature resolves; otherwise
         // it self-disables to a harmless no-op (the glamour name is then unavailable, but dyes still scrape).
-        _stringHook = new ItemTooltipModifier(interopProvider, config, glamourSource, effectsSource, log);
+        _stringHook = new ItemTooltipModifier(interopProvider, config, glamourSource, effectsSource, tooltipStrings, log);
 
         // Persisting + rebuilding both paths is funneled through one guarded callback so a save failure
         // (e.g. disk error) can never escape into the UI draw loop.
