@@ -26,11 +26,10 @@ public sealed unsafe class OwnershipBlockProvider : IDisposable
 {
     private const string AddonName = "ItemDetail";
 
-    // Vertical row layout (block-relative). Icon sizing/positioning mirrors the Condition section's
-    // (icon + value) groups — same icon size and baseline nudge. Shared with the editor preview's
-    // BuildOwnership so both render the same shape — tune here and both move.
-    public const float IconSize = 26f;
-    public const float RowHeight = 28f;
+    // Vertical row layout (block-relative): a compact icon + text row per source. Shared with the editor
+    // preview's BuildOwnership so both render the same shape — tune here and both move.
+    public const float IconSize = 24f;   // bumped back up; the 22px row pitch carries it fine
+    public const float RowHeight = 22f;  // row pitch — reduced 6px to tighten the spacing between rows
     public const float IconTextGap = 4f;
     public const float IconOffsetY = 2f; // nudge the icon down to sit on the text's baseline
     public const float StatusIconSize = 20f; // trailing status icon (e.g. the "collected" checkmark)

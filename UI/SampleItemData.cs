@@ -66,7 +66,7 @@ public sealed class SampleItemData
     private static readonly OwnershipData SampleOwnership = new(
     [
         new OwnershipEntry(OwnershipData.InventoryIcon, "Inventory: 2", OwnershipData.InventoryColor),
-        new OwnershipEntry(OwnershipData.RetainerIcon, "Celestianna: 3", OwnershipData.RetainerColors[0]),
+        new OwnershipEntry(OwnershipData.RetainerIcon, "Retainer (Celestianna): 3", OwnershipData.RetainerColors[0]),
         new OwnershipEntry(OwnershipData.GlamourDresserIcon, "Glamour Dresser", OwnershipData.DresserColor),
         new OwnershipEntry(OwnershipData.CollectibleIcon, "Card:", OwnershipData.CollectibleColor,
             OwnershipData.CollectedIcon)

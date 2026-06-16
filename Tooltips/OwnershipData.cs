@@ -76,10 +76,25 @@ public sealed record OwnershipData(IReadOnlyList<OwnershipEntry> Entries)
             var retainerIndex = 0;
             foreach (var loc in owned.Locations)
             {
-                var color = loc.Kind == OwnershipSourceKind.Retainer
-                    ? RetainerColors[retainerIndex++ % RetainerColors.Length]
-                    : ColorForKind(loc.Kind);
-                entries.Add(new OwnershipEntry(IconForKind(loc.Kind), $"{loc.Label}: {loc.Quantity}", color));
+                string text;
+                Vector4 color;
+                if (loc.Kind == OwnershipSourceKind.Retainer)
+                {
+                    // "Retainer ({name}): {count}". The label is the bare retainer name; strip a stale
+                    // "Retainer: " prefix from older snapshots so it doesn't double up.
+                    var name = loc.Label;
+                    const string stalePrefix = "Retainer: ";
+                    if (name.StartsWith(stalePrefix, StringComparison.Ordinal)) name = name[stalePrefix.Length..];
+                    text = $"Retainer ({name}): {loc.Quantity}";
+                    color = RetainerColors[retainerIndex++ % RetainerColors.Length];
+                }
+                else
+                {
+                    text = $"{loc.Label}: {loc.Quantity}";
+                    color = ColorForKind(loc.Kind);
+                }
+
+                entries.Add(new OwnershipEntry(IconForKind(loc.Kind), text, color));
             }
         }
 
