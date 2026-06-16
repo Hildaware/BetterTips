@@ -1,0 +1,20 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+    <!--
+      A small, standalone helper library for querying a player's item ownership / collection state from the
+      live game (FFXIVClientStructs + Lumina). It depends only on Dalamud — no KamiToolKit, no UI — so it can
+      be shared by any plugin (BetterTips references it; BetterBags can migrate onto it later). Dalamud /
+      FFXIVClientStructs / Lumina references resolve through DALAMUD_HOME (set in ../Directory.Build.props,
+      inherited from the BetterTips root), exactly like the KamiToolKit subproject.
+    -->
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows</TargetFramework>
+        <LangVersion>latest</LangVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <OutputType>Library</OutputType>
+        <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+        <!-- This is a library, not a plugin — don't let the Dalamud packager try to package it. -->
+        <Use_DalamudPackager>false</Use_DalamudPackager>
+    </PropertyGroup>
+</Project>
