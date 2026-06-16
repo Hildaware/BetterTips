@@ -32,7 +32,7 @@ public sealed class SampleItemData
 
     private SampleItemData(string name, string category, uint itemLevel, ushort icon,
         Row primaryStat, uint requiredLevel, byte rarity, Dictionary<LayoutSection, Row[]> body,
-        UnifiedBonusesData unifiedBonuses, ConditionData conditionSample)
+        UnifiedBonusesData unifiedBonuses, ConditionData conditionSample, OwnershipData ownershipSample)
     {
         Name = name;
         Category = category;
@@ -44,6 +44,7 @@ public sealed class SampleItemData
         _body = body;
         UnifiedBonuses = unifiedBonuses;
         ConditionSample = conditionSample;
+        OwnershipSample = ownershipSample;
     }
 
     private SampleItemData()
@@ -58,7 +59,18 @@ public sealed class SampleItemData
         _body = new Dictionary<LayoutSection, Row[]>();
         UnifiedBonuses = new UnifiedBonusesData([], []);
         ConditionSample = new ConditionData("100%", "0%", "12,345");
+        OwnershipSample = SampleOwnership;
     }
+
+    /// <summary>Representative ownership rows for the editor preview (the live values are per-character).</summary>
+    private static readonly OwnershipData SampleOwnership = new(
+    [
+        new OwnershipEntry(OwnershipData.InventoryIcon, "Inventory: 2", OwnershipData.InventoryColor),
+        new OwnershipEntry(OwnershipData.RetainerIcon, "Celestianna: 3", OwnershipData.RetainerColors[0]),
+        new OwnershipEntry(OwnershipData.GlamourDresserIcon, "Glamour Dresser", OwnershipData.DresserColor),
+        new OwnershipEntry(OwnershipData.CollectibleIcon, "Card:", OwnershipData.CollectibleColor,
+            OwnershipData.CollectedIcon)
+    ]);
 
     /// <summary>The item's display name (header line).</summary>
     public string Name { get; }
@@ -93,6 +105,10 @@ public sealed class SampleItemData
     /// <summary>The sample data for the "Condition" section — representative durability/spiritbond plus the
     /// item's real sell price (the live values are per-instance; the preview just needs realistic content).</summary>
     public ConditionData ConditionSample { get; }
+
+    /// <summary>The sample data for the "Ownership" section — representative owned/dresser/collectible rows (the
+    /// live values are per-character; the preview just needs realistic content).</summary>
+    public OwnershipData OwnershipSample { get; }
 
     /// <summary>The reconstructed body rows for a section (empty → the card shows just its header).</summary>
     public Row[] BodyRows(LayoutSection section)
@@ -241,7 +257,8 @@ public sealed class SampleItemData
             item.Rarity,
             body,
             BuildUnifiedBonuses(item, data),
-            condition);
+            condition,
+            SampleOwnership);
     }
 
     /// <summary>

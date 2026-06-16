@@ -268,7 +268,8 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         or LayoutSection.Requirements
         or LayoutSection.Effects
         or LayoutSection.GearSets
-        or LayoutSection.Glamour;
+        or LayoutSection.Glamour
+        or LayoutSection.Ownership;
 
     private TooltipContentBlock BuildCard(LayoutSection section, float width)
     {
@@ -286,6 +287,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
             LayoutSection.CraftingRepairs => BuildCrafting(card),
             LayoutSection.GearSets => BuildGearSets(card),
             LayoutSection.Condition => BuildCondition(card, width),
+            LayoutSection.Ownership => BuildOwnership(card),
             _ => BuildRows(card, section)
         };
 
@@ -477,6 +479,65 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         }
 
         return ConditionBlockProvider.TopPad + ConditionBlockProvider.RowHeight;
+    }
+
+    /// <summary>Ownership: a short vertical list of (icon + text) rows — owned count + location, dresser,
+    /// armoire, collectible — mirroring the live <see cref="OwnershipBlockProvider" /> layout (shared constants,
+    /// so both move together).</summary>
+    private float BuildOwnership(TooltipContentBlock card)
+    {
+        var entries = _sample.OwnershipSample.Entries;
+        var shown = Math.Min(entries.Count, MaxBodyLines);
+        var y = card.BodyTop;
+
+        for (var i = 0; i < shown; i++)
+        {
+            var entry = entries[i];
+
+            var icon = new IconImageNode
+            {
+                FitTexture = true,
+                IconId = entry.IconId,
+                Size = new Vector2(OwnershipBlockProvider.IconSize, OwnershipBlockProvider.IconSize),
+                Position = new Vector2(TooltipContentBlock.BodyInsetX,
+                    y + (OwnershipBlockProvider.RowHeight - OwnershipBlockProvider.IconSize) / 2f
+                    + OwnershipBlockProvider.IconOffsetY)
+            };
+            icon.AttachNode(card);
+
+            var textX = TooltipContentBlock.BodyInsetX + OwnershipBlockProvider.IconSize + OwnershipBlockProvider.IconTextGap;
+            var text = new TextNode
+            {
+                String = entry.Text,
+                FontType = FontType.Axis,
+                FontSize = OwnershipBlockProvider.BodyFontSize,
+                AlignmentType = AlignmentType.TopLeft,
+                TextColor = entry.Color,
+                TextOutlineColor = OutlineColor,
+                TextFlags = TextFlags.AutoAdjustNodeSize,
+                Position = new Vector2(textX, y + (OwnershipBlockProvider.RowHeight - OwnershipBlockProvider.BodyFontSize) / 2f)
+            };
+            text.AttachNode(card);
+
+            if (entry.TrailingIcon != 0)
+            {
+                var textW = text.GetTextDrawSize(entry.Text, considerScale: false).X;
+                var status = new IconImageNode
+                {
+                    FitTexture = true,
+                    IconId = entry.TrailingIcon,
+                    Size = new Vector2(OwnershipBlockProvider.StatusIconSize, OwnershipBlockProvider.StatusIconSize),
+                    Position = new Vector2(textX + textW + OwnershipBlockProvider.IconTextGap,
+                        y + (OwnershipBlockProvider.RowHeight - OwnershipBlockProvider.StatusIconSize) / 2f
+                        + OwnershipBlockProvider.IconOffsetY)
+                };
+                status.AttachNode(card);
+            }
+
+            y += OwnershipBlockProvider.RowHeight;
+        }
+
+        return shown * OwnershipBlockProvider.RowHeight;
     }
 
     /// <summary>Crafting & Repairs: the small condition gear icon at the left, then the tan/white rows.</summary>

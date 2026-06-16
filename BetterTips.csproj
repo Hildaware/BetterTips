@@ -72,6 +72,19 @@
     </ItemGroup>
 
     <!--
+      FfxivCollections: our standalone item ownership / collection-state library (shared with BetterBags
+      later). Referenced as a built project; the Remove globs keep our default *.cs globbing from pulling its
+      sources into this project. CopyLocalLockFileAssemblies (set above) lands FfxivCollections.dll next to
+      BetterTips.dll so the dev plugin loads it.
+    -->
+    <ItemGroup>
+        <Compile Remove="FfxivCollections\**"/>
+        <None Remove="FfxivCollections\**"/>
+        <Content Remove="FfxivCollections\**"/>
+        <ProjectReference Include="FfxivCollections\FfxivCollections.csproj"/>
+    </ItemGroup>
+
+    <!--
       DalamudPackager's NormalizePath() rewrites every zip entry name through
       Path.DirectorySeparatorChar before storing. On Windows that's '\\', which is invalid
       as a ZIP path separator — extractors see a flat filename instead of a directory tree.

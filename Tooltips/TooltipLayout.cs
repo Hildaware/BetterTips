@@ -40,7 +40,13 @@ public enum LayoutSection
     // which naturally excludes the per-instance noise the native description block (#40) overlays — applied
     // dyes and the "Advanced Melding Forbidden" notice. Positioned specially like the other custom sections.
     // Append-only.
-    EnhancedDescription
+    EnhancedDescription,
+
+    // BetterTips' own "Ownership" section (no native block — positioned specially, like GearSets/Glamour):
+    // where the hovered item is already in the player's possession (owned count + location, Glamour Dresser,
+    // Armoire, and whether its mount/minion/Triple Triad card is unlocked). Live game state read via the
+    // shared FfxivCollections library. Append-only.
+    Ownership
 }
 
 /// <summary>Display label + the block node id(s) a <see cref="LayoutSection" /> moves as a unit.</summary>
@@ -124,6 +130,10 @@ public static class TooltipLayout
         new(LayoutSection.Materia,            "Materia",                     [93]),
         new(LayoutSection.Effects,            "Effects",                     [49]),
         new(LayoutSection.CraftingRepairs,    "Crafting & Repairs",          [68]),
+        // No block ids — BetterTips' own Possessions list (owned count + location, dresser, armoire,
+        // collectible), built by OwnershipBlockProvider and laid out by the relayout at this slot. Sits above
+        // Condition.
+        new(LayoutSection.Ownership,          "Possessions",                 []),
         // No block ids — BetterTips' own Condition row (durability + spiritbond + sell price), built by
         // ConditionBlockProvider and laid out by the relayout at this slot. Replaces the native gauge bars (#7).
         new(LayoutSection.Condition,          "Condition",                   []),
@@ -144,7 +154,7 @@ public static class TooltipLayout
     /// <summary>Our own non-native sections (positioned by their controllers, not the reorder pass).</summary>
     public static bool IsCustom(LayoutSection id)
         => id is LayoutSection.GearSets or LayoutSection.Glamour or LayoutSection.Condition
-            or LayoutSection.EnhancedDescription;
+            or LayoutSection.EnhancedDescription or LayoutSection.Ownership;
 
     /// <summary>
     ///     The fixed body order of the <b>Enhanced</b> tooltip (used when
@@ -157,7 +167,7 @@ public static class TooltipLayout
     public static readonly LayoutSection[] EnhancedBodyOrder =
     [
         LayoutSection.AttributeBonuses, LayoutSection.EnhancedDescription, LayoutSection.Glamour,
-        LayoutSection.GearSets, LayoutSection.Condition
+        LayoutSection.GearSets, LayoutSection.Ownership, LayoutSection.Condition
     ];
 
     /// <summary>

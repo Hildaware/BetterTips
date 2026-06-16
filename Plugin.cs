@@ -1,5 +1,7 @@
+using System.IO;
 using BetterTips.Tooltips;
 using BetterTips.UI;
+using FfxivCollections;
 using Dalamud.Game.Command;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin;
@@ -40,6 +42,8 @@ public sealed class Plugin : IDalamudPlugin
     private readonly GlamourBlockProvider _glamour;
     private readonly ConditionBlockProvider _condition;
     private readonly DescriptionBlockProvider _description;
+    private readonly OwnershipBlockProvider _ownership;
+    private readonly ItemCollectionService _collections;
     private readonly IPluginLog _log;
     private readonly TooltipRelayoutController _relayout;
     private readonly IDalamudPluginInterface _pluginInterface;
@@ -55,6 +59,7 @@ public sealed class Plugin : IDalamudPlugin
         IGameGui gameGui,
         IDataManager dataManager,
         IClientState clientState,
+        IFramework framework,
         IObjectTable objectTable,
         IPluginLog log)
     {
@@ -160,10 +165,20 @@ public sealed class Plugin : IDalamudPlugin
         _glamour = new GlamourBlockProvider(addonLifecycle, gameGui, dataManager, glamourSource, config, log);
         _condition = new ConditionBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
         _description = new DescriptionBlockProvider(addonLifecycle, gameGui, dataManager, config, log);
+        // The ownership block reads live + persisted inventory/collection state via the shared FfxivCollections
+        // library. Its store lives in a SHARED directory (a sibling of our plugin config dir) so BetterBags can
+        // later read/write the same file; the service captures cache-on-view sources (retainers, dresser,
+        // armoire, saddlebags) on a framework tick and merges them with the always-live containers at query.
+        var sharedDir = Path.Combine(
+            pluginInterface.ConfigDirectory.Parent?.FullName ?? pluginInterface.ConfigDirectory.FullName,
+            "FfxivCollections");
+        _collections = new ItemCollectionService(framework, dataManager, sharedDir,
+            (msg, ex) => log.Error(ex, msg));
+        _ownership = new OwnershipBlockProvider(addonLifecycle, gameGui, _collections, config, log);
 
         // Primary path: the signature-free single-pass relayout (hide + reorder + gear-set + unified header +
-        // unified bonuses/materia + glamour + condition).
-        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet, _unifiedHeader, _unifiedBonuses, _glamour, _condition, _description);
+        // unified bonuses/materia + glamour + condition + ownership).
+        _relayout = new TooltipRelayoutController(addonLifecycle, gameGui, config, log, _gearSet, _unifiedHeader, _unifiedBonuses, _glamour, _condition, _description, _ownership);
         // Fallback/enhancement: a signature hook that blanks text-only lines for the cleanest collapse, and
         // snapshots the glamour name for the glamour block. Only active if the signature resolves; otherwise
         // it self-disables to a harmless no-op (the glamour name is then unavailable, but dyes still scrape).
@@ -268,6 +283,10 @@ public sealed class Plugin : IDalamudPlugin
         _glamour.Dispose();
         _condition.Dispose();
         _description.Dispose();
+        _ownership.Dispose();
+        // Unsubscribes its framework tick and flushes the store to disk; not a KTK owner, so order vs KTK is
+        // irrelevant.
+        _collections.Dispose();
         _controlWindow.Dispose();
         _previewWindow.Dispose();
         KamiToolKitLibrary.Dispose();

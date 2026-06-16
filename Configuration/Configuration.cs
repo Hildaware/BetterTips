@@ -87,6 +87,16 @@ public sealed class Configuration : IPluginConfiguration
     public bool ShowCondition { get; set; } = true;
 
     /// <summary>
+    ///     Append an "Ownership" section showing where the hovered item is already in the player's possession
+    ///     (owned count + location, Glamour Dresser, Armoire, and whether its mount/minion/Triple Triad card is
+    ///     unlocked). Live game state read via the shared FfxivCollections library. Like Gear Sets/Glamour this
+    ///     <em>adds</em> content and honors <see cref="Enabled" />; it only appears when the item is owned
+    ///     somewhere or grants a tracked collectible. A missing field in an old config keeps this initializer,
+    ///     so no migration is needed.
+    /// </summary>
+    public bool ShowOwnership { get; set; } = true;
+
+    /// <summary>
     ///     The curated <see cref="Enhancement" /> toggles the user has enabled (the editor's "Enhancements"
     ///     tab). Opt-in: anything not listed here is off, so an old config (missing the field) starts empty
     ///     and needs no migration. Serialized by enum value, so <see cref="Enhancement" /> members are

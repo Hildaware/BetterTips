@@ -75,6 +75,10 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // mode regardless (it's in EnhancedHiddenBlockIds).
     private readonly DescriptionBlockProvider _description;
 
+    // Owns/draws BetterTips' "Ownership" block (owned count + location, dresser, armoire, collectible). Laid
+    // out at the Ownership slot in the order; reads independent game state, so it never hides a native block.
+    private readonly OwnershipBlockProvider _ownership;
+
     // Recomputed on config change; each replaced as a whole reference (atomic) so a callback never sees a
     // half-mutated collection.
     private ItemDetailGroup[] _hiddenGroups = [];
@@ -105,6 +109,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     private float _planConditionY;
     private bool _planShowDescription;
     private float _planDescriptionY;
+    private bool _planShowOwnership;
+    private float _planOwnershipY;
     private readonly List<ItemDetailGroup> _planGroups = [];   // named groups to keep hidden
     private readonly List<uint> _planHideIds = [];             // block/sub-node ids to keep hidden (incl. conditional)
     private readonly List<(uint Id, float Y)> _planBlocks = []; // native content blocks → absolute target Y
@@ -146,7 +152,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     public TooltipRelayoutController(IAddonLifecycle addonLifecycle, IGameGui gameGui,
         Configuration.Configuration config, IPluginLog log, GearSetBlockProvider gearSet,
         UnifiedHeaderBlockProvider unified, UnifiedBonusesBlockProvider bonuses, GlamourBlockProvider glamour,
-        ConditionBlockProvider condition, DescriptionBlockProvider description)
+        ConditionBlockProvider condition, DescriptionBlockProvider description, OwnershipBlockProvider ownership)
     {
         _addonLifecycle = addonLifecycle;
         _gameGui = gameGui;
@@ -158,6 +164,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _glamour = glamour;
         _condition = condition;
         _description = description;
+        _ownership = ownership;
         Rebuild();
 
         // Compute the plan when the game updates the tooltip's content...
@@ -316,6 +323,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             _glamour.Hide();
             _condition.Hide();
             _description.Hide();
+            _ownership.Hide();
             return;
         }
 
@@ -359,6 +367,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planShowGlamour = false;
         _planShowCondition = false;
         _planShowDescription = false;
+        _planShowOwnership = false;
         _planControlY = float.NaN;
 
         // Build + measure our added blocks first; they leave themselves HIDDEN, so the scans below ignore them.
@@ -371,6 +380,9 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         var glamourWants = _glamour.TryMeasure(addon, root->Width, out var glamourHeight);
         var conditionWants = _condition.TryMeasure(addon, root->Width, out var conditionHeight);
         var descriptionWants = _description.TryMeasure(addon, root->Width, out var descriptionHeight);
+        // The ownership block reads independent game state (inventory/collections), so order doesn't matter
+        // for it — it never scrapes a native node the hides below would remove.
+        var ownershipWants = _ownership.TryMeasure(addon, root->Width, out var ownershipHeight);
 
         var hasHides = _hiddenGroups.Length > 0 || _hiddenBlocks.Length > 0 ||
                        _hiddenNodeIds.Length > 0 || _conditionalBlocks.Length > 0;
@@ -378,7 +390,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         // Do no harm when idle: nothing configured to change → leave the game's layout pristine (no plan).
         // Restore anything a prior (now-removed) customization left applied to this same item first.
         if (!hasHides && !_reorderActive && !gearWants && !unifiedWants && !bonusesWants && !glamourWants &&
-            !conditionWants && !descriptionWants)
+            !conditionWants && !descriptionWants && !ownershipWants)
         {
             RestorePrevious(addon);
             _prevIncluded.Clear();
@@ -556,6 +568,14 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
                     _planDescriptionY = y;
                     y += descriptionHeight;
                 }
+                else if (id == LayoutSection.Ownership && ownershipWants)
+                {
+                    _ownership.PlaceAt(y);
+                    _ownership.Show();
+                    _planShowOwnership = true;
+                    _planOwnershipY = y;
+                    y += ownershipHeight;
+                }
 
                 continue;
             }
@@ -639,6 +659,7 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planShowGlamour = false;
         _planShowCondition = false;
         _planShowDescription = false;
+        _planShowOwnership = false;
         _planControlY = float.NaN;
         _prevIncluded.Clear();
         _appliedHideIds.Clear();
@@ -787,6 +808,17 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         else
         {
             _description.Hide();
+        }
+
+        // Ownership block.
+        if (_planShowOwnership)
+        {
+            _ownership.PlaceAt(_planOwnershipY);
+            _ownership.Show();
+        }
+        else
+        {
+            _ownership.Hide();
         }
 
         // The durability/spiritbond gauge (#7) is only ever hidden now (when the Condition section or unified
