@@ -6,8 +6,6 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using KamiToolKit.Enums;
 using KamiToolKit.Nodes;
-using Lumina.Text;
-using Lumina.Text.ReadOnly;
 
 namespace BetterTips.Tooltips;
 
@@ -41,11 +39,6 @@ public sealed unsafe class EffectsBlockProvider : IDisposable
 
     private static readonly Vector4 BaseColor = new(1f, 1f, 1f, 1f);   // non-number text (white)
     private static readonly Vector4 OutlineColor = new(0f, 0f, 0f, 1f);
-    // Numbers are coloured this green (matches the class-name green used elsewhere) to stand out.
-    private const byte GreenR = 0x8C, GreenG = 0xFF, GreenB = 0x5A;
-
-    // Number runs: optional sign, digits with thousands separators/decimals, optional percent.
-    private static readonly Regex NumberRegex = new(@"[+-]?\d[\d,\.]*%?", RegexOptions.Compiled);
 
     private readonly IAddonLifecycle _addonLifecycle;
     private readonly IGameGui _gameGui;
@@ -140,7 +133,7 @@ public sealed unsafe class EffectsBlockProvider : IDisposable
                 for (var i = 0; i < lines.Count; i++)
                 {
                     var node = GetOrCreate(i);
-                    node.String = ColorNumbers(lines[i]);
+                    node.String = TooltipText.ColorNumbers(lines[i]);
                     var rowY = baseY + i / 2 * LineHeight;
 
                     if (i % 2 == 0)
@@ -168,7 +161,7 @@ public sealed unsafe class EffectsBlockProvider : IDisposable
                 for (var i = 0; i < lines.Count; i++)
                 {
                     var node = GetOrCreate(i);
-                    node.String = ColorNumbers(lines[i]);
+                    node.String = TooltipText.ColorNumbers(lines[i]);
                     // Reset to left-aligned auto-size (a node may have been a right column cell last render).
                     node.AlignmentType = AlignmentType.TopLeft;
                     node.TextFlags = TextFlags.AutoAdjustNodeSize;
@@ -209,25 +202,6 @@ public sealed unsafe class EffectsBlockProvider : IDisposable
     public void Hide()
     {
         if (_block is not null) _block.IsVisible = false;
-    }
-
-    /// <summary>Build a SeString for one effect line with number runs coloured green (the rest renders in the
-    /// node's base colour).</summary>
-    private static ReadOnlySeString ColorNumbers(string line)
-    {
-        var sb = new SeStringBuilder();
-        var last = 0;
-        foreach (Match m in NumberRegex.Matches(line))
-        {
-            if (m.Index > last) sb.Append(line.AsSpan(last, m.Index - last));
-            sb.PushColorRgba(GreenR, GreenG, GreenB, 0xFF);
-            sb.Append(line.AsSpan(m.Index, m.Length));
-            sb.PopColor();
-            last = m.Index + m.Length;
-        }
-
-        if (last < line.Length) sb.Append(line.AsSpan(last));
-        return sb.ToReadOnlySeString();
     }
 
     /// <summary>Whether to render the lines two-up: at least two lines, all stat-based, and each fits a

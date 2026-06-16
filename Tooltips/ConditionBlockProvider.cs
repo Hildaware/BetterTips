@@ -36,15 +36,15 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
     public const float RowHeight = 28f;      // height of the single content row (fits the icon)
     public const uint BodyFontSize = 12;
 
-    // The block is headerless (no title/divider), so add a little top padding to separate the row from the
-    // section above it. Shared with the editor preview's BuildCondition. Kept small so it doesn't compound with
-    // the previous section's bottom padding into a large gap (e.g. below Possessions).
-    public const float TopPad = 2f;
+    // The block is headerless (no title/divider). Kept at zero so it doesn't compound with the previous
+    // section's bottom padding (and the block's own headerless body inset) into a large gap. Shared with the
+    // editor preview's BuildCondition.
+    public const float TopPad = 0f;
 
     // Spacing between adjacent (icon + value) groups in the right-aligned cluster.
     public const float GroupGap = 20f;
 
-    private const float BlockBottomPad = 6f; // breathing room below the block
+    private const float BlockBottomPad = 2f; // breathing room below the block (kept tight)
 
     private static readonly Vector4 ValueColor = new(1f, 1f, 1f, 1f);
     private static readonly Vector4 OutlineColor = new(0f, 0f, 0f, 1f);
@@ -173,6 +173,7 @@ public sealed unsafe class ConditionBlockProvider : IDisposable
                 icon.Position = new Vector2(groupX, y + (RowHeight - IconSize) / 2f + IconOffsetY);
                 icon.IsVisible = true;
 
+                value.TextColor = entry.Color;
                 value.Position = new Vector2(groupX + IconSize + IconValueGap, y + (RowHeight - BodyFontSize) / 2f);
                 value.IsVisible = true;
 

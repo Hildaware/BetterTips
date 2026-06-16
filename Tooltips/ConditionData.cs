@@ -5,8 +5,8 @@ using Lumina.Excel.Sheets;
 
 namespace BetterTips.Tooltips;
 
-/// <summary>One row of the "Condition" section: an icon and the value drawn next to it.</summary>
-public sealed record ConditionEntry(uint IconId, string Value);
+/// <summary>One row of the "Condition" section: an icon, the value, and the value's colour.</summary>
+public sealed record ConditionEntry(uint IconId, string Value, Vector4 Color);
 
 /// <summary>
 ///     The data the "Condition" section renders: the item's <b>durability</b> and <b>spiritbond</b> (both
@@ -24,19 +24,43 @@ public sealed record ConditionData(string? Durability, string? Spiritbond, strin
     public const uint SpiritbondIcon = 60427;
     public const uint SellPriceIcon = 60412;
 
+    // Row colours. Sell price is always a warm gold; durability is coloured by percentage (<50% yellow, <30%
+    // orange, <15% red, else white); spiritbond is green only at 100% (ready to extract), else white.
+    private static readonly Vector4 DefaultColor = new(1f, 1f, 1f, 1f);
+    private static readonly Vector4 GoldColor = new(0xE6 / 255f, 0xBE / 255f, 0x5A / 255f, 1f);
+    private static readonly Vector4 YellowColor = new(0xFF / 255f, 0xE3 / 255f, 0x4D / 255f, 1f);
+    private static readonly Vector4 OrangeColor = new(0xFF / 255f, 0x9B / 255f, 0x3D / 255f, 1f);
+    private static readonly Vector4 RedColor = new(0xE8 / 255f, 0x47 / 255f, 0x3C / 255f, 1f);
+    private static readonly Vector4 GreenColor = new(0x5A / 255f, 0xE6 / 255f, 0x5A / 255f, 1f);
+
     /// <summary>Whether the section has anything to show.</summary>
     public bool HasContent => Durability is not null || Spiritbond is not null || SellPrice is not null;
 
     /// <summary>The visible rows in display order: durability, spiritbond, then sell price (each present only
-    /// when it has a value).</summary>
+    /// when it has a value), each with its colour.</summary>
     public IReadOnlyList<ConditionEntry> Entries()
     {
         var list = new List<ConditionEntry>(3);
-        if (Durability is not null) list.Add(new ConditionEntry(DurabilityIcon, Durability));
-        if (Spiritbond is not null) list.Add(new ConditionEntry(SpiritbondIcon, Spiritbond));
-        if (SellPrice is not null) list.Add(new ConditionEntry(SellPriceIcon, SellPrice));
+        if (Durability is not null) list.Add(new ConditionEntry(DurabilityIcon, Durability, PercentColor(Durability)));
+        if (Spiritbond is not null) list.Add(new ConditionEntry(SpiritbondIcon, Spiritbond, SpiritbondColor(Spiritbond)));
+        if (SellPrice is not null) list.Add(new ConditionEntry(SellPriceIcon, SellPrice, GoldColor));
         return list;
     }
+
+    /// <summary>Colour a percentage value ("23%") by threshold: &lt;15% red, &lt;30% orange, &lt;50% yellow,
+    /// otherwise the default. Non-percent text keeps the default.</summary>
+    private static Vector4 PercentColor(string value)
+    {
+        if (!int.TryParse(value.TrimEnd('%', ' '), out var pct)) return DefaultColor;
+        if (pct < 15) return RedColor;
+        if (pct < 30) return OrangeColor;
+        if (pct < 50) return YellowColor;
+        return DefaultColor;
+    }
+
+    /// <summary>Colour spiritbond: green at 100% (ready to extract materia), otherwise the default white.</summary>
+    private static Vector4 SpiritbondColor(string value)
+        => int.TryParse(value.TrimEnd('%', ' '), out var pct) && pct >= 100 ? GreenColor : DefaultColor;
 
     /// <summary>
     ///     Build the data for the current hover, or <c>null</c> when there's nothing to show. The condition

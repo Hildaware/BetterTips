@@ -447,7 +447,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
                 FontType = FontType.Axis,
                 FontSize = ConditionBlockProvider.BodyFontSize,
                 AlignmentType = AlignmentType.TopLeft,
-                TextColor = ValueColor,
+                TextColor = entries[i].Color,
                 TextOutlineColor = OutlineColor,
                 TextFlags = TextFlags.AutoAdjustNodeSize
             };
@@ -620,7 +620,7 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         {
             var line = new TextNode
             {
-                String = rows[i].Value,
+                String = TooltipText.ColorNumbers(rows[i].Value), // numbers in green, matching the live block
                 FontType = FontType.Axis,
                 FontSize = BodyFontSize,
                 AlignmentType = AlignmentType.Center, // centered within the full card width

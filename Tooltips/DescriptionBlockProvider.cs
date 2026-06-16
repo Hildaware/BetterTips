@@ -101,7 +101,7 @@ public sealed unsafe class DescriptionBlockProvider : IDisposable
             for (var i = 0; i < lines.Count; i++)
             {
                 var node = GetOrCreateLine(i);
-                node.String = lines[i];
+                node.String = TooltipText.ColorNumbers(lines[i]); // numbers (durations, %, point caps) in green
                 // Full-width, center-aligned → each line is centered in the tooltip.
                 node.Size = new Vector2(width, LineHeight);
                 node.Position = new Vector2(0f, y);
