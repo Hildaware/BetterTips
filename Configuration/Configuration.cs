@@ -25,10 +25,11 @@ public sealed class Configuration : IPluginConfiguration
     ///     <b>structure</b> config below (<see cref="HiddenSections" /> / <see cref="HiddenLayoutSections" /> /
     ///     <see cref="SectionOrder" />) is disregarded and the editor's Structure tab is locked. When
     ///     <c>false</c> the <b>modifier</b> tooltip is shown: the structure config governs (add / remove /
-    ///     reorder native sections, plus the gear-set / glamour / condition additions). A missing field in an
-    ///     old config keeps this initializer (off), so no migration is needed.
+    ///     reorder native sections, plus the gear-set / glamour / condition additions). Defaults to
+    ///     <c>true</c> (Enhanced is the out-of-the-box product); a missing field in an old config keeps this
+    ///     initializer, so no migration is needed.
     /// </summary>
-    public bool EnhancedMode { get; set; }
+    public bool EnhancedMode { get; set; } = true;
 
     /// <summary>
     ///     The finer, non-block detail hides (the category line inside the header, the extract/project
