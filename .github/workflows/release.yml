@@ -99,6 +99,21 @@ jobs:
           "PLUGIN_ZIP=$pluginZip" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "Packaged $pluginZip"
 
+          # DalamudPackager writes the API level into the manifest next to latest.zip. The index.json
+          # entry needs it: a testing-exclusive plugin is filtered out by Dalamud's CanUseTesting()
+          # unless TestingDalamudApiLevel is set, and the install compat check is DalamudApiLevel == running level.
+          $manifest = Join-Path $latest.DirectoryName "BetterTips.json"
+          if (-not (Test-Path $manifest)) {
+            $manifest = Get-ChildItem -Path "bin/Release" -Recurse -Filter "BetterTips.json" -ErrorAction SilentlyContinue | Select-Object -First 1 | ForEach-Object { $_.FullName }
+          }
+          $apiLevel = (Get-Content $manifest -Raw | ConvertFrom-Json).DalamudApiLevel
+          if (-not $apiLevel) {
+            Write-Error "Could not read DalamudApiLevel from packaged manifest ($manifest)."
+            exit 1
+          }
+          "BETTERTIPS_API_LEVEL=$apiLevel" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Packaged manifest DalamudApiLevel=$apiLevel"
+
       - name: Upload artifact (dry-run only)
         if: env.DRY_RUN == 'true'
         uses: actions/upload-artifact@v4
@@ -168,6 +183,12 @@ jobs:
               Author              = "Sel"
               Name                = "BetterTips"
               AssemblyVersion     = $env:BETTERTIPS_VERSION
+              # Testing-exclusive: Dalamud's CanUseTesting() requires TestingDalamudApiLevel, and the
+              # install compat check needs DalamudApiLevel == the running API level. Without these the
+              # plugin is filtered out / reported as a version mismatch for testers.
+              DalamudApiLevel        = [int]$env:BETTERTIPS_API_LEVEL
+              TestingAssemblyVersion = $env:BETTERTIPS_VERSION
+              TestingDalamudApiLevel = [int]$env:BETTERTIPS_API_LEVEL
               Punchline           = "Trim the clutter from item tooltips."
               Description         = "Declutters and redesigns FFXIV item tooltips. Remove, reorder, and add sections (Gear Sets, Glamour, Condition, Ownership), or flip on the Enhanced curated layout for a fully redesigned tooltip."
               InternalName        = "BetterTips"
@@ -186,6 +207,11 @@ jobs:
             $entry.AssemblyVersion     = $env:BETTERTIPS_VERSION
             # Keep it a testing-exclusive (beta) plugin on every release.
             $entry.IsTestingExclusive  = $true
+            # Testing-exclusive entries need these or Dalamud filters the plugin out of the testing
+            # channel (CanUseTesting requires TestingDalamudApiLevel) and fails the API compat check.
+            $entry | Add-Member -NotePropertyName DalamudApiLevel        -NotePropertyValue ([int]$env:BETTERTIPS_API_LEVEL) -Force
+            $entry | Add-Member -NotePropertyName TestingAssemblyVersion -NotePropertyValue $env:BETTERTIPS_VERSION          -Force
+            $entry | Add-Member -NotePropertyName TestingDalamudApiLevel -NotePropertyValue ([int]$env:BETTERTIPS_API_LEVEL) -Force
             $entry.DownloadLinkInstall = $download
             $entry.DownloadLinkTesting = $download
             $entry.DownloadLinkUpdate  = $download
