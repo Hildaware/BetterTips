@@ -719,7 +719,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             }
         }
 
-        // The control-hints row trails the content (unless the user hid it, in which case it's invisible).
+        // The control-hints row trails the content (unless hidden, in which case it's invisible). Enhanced mode
+        // hides it outright (EnhancedHiddenBlockIds), so this only places it in modifier mode.
         var control = addon->GetNodeById(TooltipLayout.ControlHintsBlockId);
         if (control is not null && (control->NodeFlags & NodeFlags.Visible) != 0)
         {
@@ -1304,6 +1305,20 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
             $"BetterTips WATCH:   DOCK set={_config.DockSet} corner={_config.Anchor} " +
             $"origin=({_config.DockOriginX:0},{_config.DockOriginY:0}) live=({liveX:0},{liveY:0}) " +
             $"planXY=({_planAddonX:0},{_planAddonY:0}) scale={addon->Scale:0.##} offFromPlan={offFromPlan:0.##}");
+
+        // Enhanced layout breakdown: each custom section's top Y (or "-" when not shown), the control-hints row,
+        // the total height and the live frame height — so "space at the bottom" reads off directly as the gap
+        // between the last section and control/total/frame.
+        var frame = FindFrame(addon, rootId);
+        string Sec(bool show, float v) => show ? v.ToString("0") : "-";
+        _log.Information(
+            $"BetterTips WATCH:   ENH unified={Sec(_planShowUnified, _planUnifiedY)} " +
+            $"bonuses={Sec(_planShowBonuses, _planBonusesY)} effects={Sec(_planShowEffects, _planEffectsY)} " +
+            $"desc={Sec(_planShowDescription, _planDescriptionY)} glam={Sec(_planShowGlamour, _planGlamourY)} " +
+            $"gear={Sec(_planShowGear, _planGearY)} own={Sec(_planShowOwnership, _planOwnershipY)} " +
+            $"cond={Sec(_planShowCondition, _planConditionY)} " +
+            $"control={(float.IsNaN(_planControlY) ? "-" : _planControlY.ToString("0"))} " +
+            $"total={_planTotalHeight:0} frameH={(frame is not null ? frame->Height : 0)}");
 
         foreach (var section in _sectionOrder)
         {

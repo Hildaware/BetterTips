@@ -181,13 +181,16 @@ public static class TooltipLayout
     ///     the header's preserved binding/untradable line (<see cref="BindingLineBlockId" />) and storage icons
     ///     (<c>#24</c>). Damage/Defense (<c>#36</c>), Item Level (<c>#62</c>), Description (<c>#40</c>),
     ///     Bonuses (<c>#97</c>), Materia (<c>#93</c>), Effects (<c>#49</c>), Crafting &amp; Repairs (<c>#68</c>),
-    ///     Vendor/Market (<c>#43</c>,<c>#47</c>), Requirements (<c>#53</c>), Crafter Signature (<c>#4</c>). The
+    ///     Vendor/Market (<c>#43</c>,<c>#47</c>), Requirements (<c>#53</c>), Crafter Signature (<c>#4</c>), and
+    ///     the control-hints row (<c>#2</c>, the keybind reminders — clutter in the curated layout, and the
+    ///     bottom space it would otherwise leave). The
     ///     native header name/icon/category sub-nodes are <b>not</b> here — the unified header hides those itself
     ///     (only when it shows), so a non-equippable hover keeps its native name. The native Effects block
     ///     (<c>#49</c>) is hidden here, but our own <see cref="LayoutSection.EnhancedEffects" /> section scrapes
     ///     it (before this hide) and re-renders it above Description with green numbers.
     /// </summary>
-    public static readonly uint[] EnhancedHiddenBlockIds = [36, 62, 40, 97, 93, 49, 68, 43, 47, 53, 4];
+    public static readonly uint[] EnhancedHiddenBlockIds =
+        [36, 62, 40, 97, 93, 49, 68, 43, 47, 53, 4, ControlHintsBlockId];
 
     /// <summary>The default top-to-bottom order (best-effort match for the game's natural order).</summary>
     public static readonly LayoutSection[] DefaultOrder = Sections.Select(s => s.Id).ToArray();

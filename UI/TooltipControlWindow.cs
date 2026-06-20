@@ -78,9 +78,11 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             BuildGlobalToggles(x, ref y, width);
             BuildStructureGroup(x, ref y, width);
 
-            // The preview and the (hidden-by-default) dock window open alongside the controls and close with
-            // them (OnFinalize). Companions — never independently finalized mid-session.
+            // The preview and dock windows open alongside the controls and close with them (OnFinalize).
+            // Companions — never independently finalized mid-session. Both start hidden: the preview is opt-in
+            // (the "Show tooltip preview" switch), the dock only shows while "Move tooltip" is on.
             _preview.Open();
+            _preview.SetVisible(false);
             _dock.Open();
             _dock.SetVisible(false);
         }
@@ -132,7 +134,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
         _showPreview = new CheckboxNode
         {
             String = "Show tooltip preview",
-            IsChecked = true,
+            IsChecked = false, // hidden by default — opt in when you want the mock
             Position = new Vector2(x, y),
             Size = size
         };
