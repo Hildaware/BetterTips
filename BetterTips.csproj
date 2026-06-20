@@ -10,9 +10,9 @@
     <!-- Assembly Configuration -->
     <PropertyGroup>
         <AssemblyName>BetterTips</AssemblyName>
-        <AssemblyVersion>7.5.1.0</AssemblyVersion>
-        <FileVersion>7.5.1.0</FileVersion>
-        <InformationalVersion>7.5.1.0</InformationalVersion>
+        <AssemblyVersion>7.5.1.1</AssemblyVersion>
+        <FileVersion>7.5.1.1</FileVersion>
+        <InformationalVersion>7.5.1.1</InformationalVersion>
     </PropertyGroup>
 
     <!-- Build Configuration -->
