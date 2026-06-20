@@ -24,6 +24,7 @@ public sealed class NonEquipHeaderNodes
 {
     public const float HPad = 16f;
     public const uint NameFontSize = 16;
+    public const uint MinNameFontSize = 11;   // floor the name shrinks to when it won't fit the width
     public const uint TypeFontSize = 12;
     public const uint RecastFontSize = 18;
     public const uint LabelFontSize = 12;
@@ -157,12 +158,20 @@ public sealed class NonEquipHeaderNodes
     /// glyphs like the HQ mark), with the given alignment + width.</summary>
     private void SetName(NonEquipHeaderData data, float x, float y, AlignmentType align, float width)
     {
-        _name.String = data.NameRaw is not null ? new ReadOnlySeString(data.NameRaw) : data.Name;
+        ReadOnlySeString nameContent = data.NameRaw is not null ? new ReadOnlySeString(data.NameRaw) : data.Name;
+        _name.String = nameContent;
         _name.TextColor = RarityColor(data.Rarity);
         _name.AlignmentType = align;
         _name.TextFlags = align == AlignmentType.Center ? 0 : TextFlags.AutoAdjustNodeSize;
         _name.Size = new Vector2(width, NameFontSize + 8f);
         _name.Position = new Vector2(x, y);
+
+        // Shrink the font (down to the floor) if the name won't fit, so long names don't clip/overflow. The
+        // banner name centers across the full width (keep tooltip margins); the compact name's `width` is
+        // already its available column (icon → right padding), so fit to it directly.
+        var fitWidth = align == AlignmentType.Center ? width - HPad * 2f : width;
+        TooltipText.FitFontSize(_name, nameContent, NameFontSize, MinNameFontSize, fitWidth);
+
         _name.IsVisible = true;
     }
 

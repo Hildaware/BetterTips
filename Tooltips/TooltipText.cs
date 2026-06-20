@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using KamiToolKit.Nodes;
 using Lumina.Text;
 using Lumina.Text.ReadOnly;
 
@@ -7,6 +8,32 @@ namespace BetterTips.Tooltips;
 /// <summary>Shared text helpers for the custom tooltip sections.</summary>
 internal static class TooltipText
 {
+    /// <summary>
+    ///     Shrink <paramref name="node" />'s font size — starting at <paramref name="baseFontSize" />, stepping
+    ///     down no lower than <paramref name="minFontSize" /> — until <paramref name="content" /> fits within
+    ///     <paramref name="availableWidth" /> (so an over-long item name shrinks rather than overflowing/clipping
+    ///     the tooltip). Measures with the node's own params via
+    ///     <see cref="TextNode.GetTextDrawSize(ReadOnlySeString, bool)" />, so <paramref name="content" /> should
+    ///     be the same text the node displays. Sets the node's <see cref="TextNode.FontSize" /> and returns the
+    ///     chosen size.
+    /// </summary>
+    public static uint FitFontSize(TextNode node, ReadOnlySeString content, uint baseFontSize, uint minFontSize,
+        float availableWidth)
+    {
+        var size = baseFontSize;
+        while (true)
+        {
+            node.FontSize = size;
+            if (size <= minFontSize) break;                                              // legibility floor
+            if (availableWidth <= 0f) break;                                             // no width to fit to
+            if (node.GetTextDrawSize(content, considerScale: false).X <= availableWidth) // fits at this size
+                break;
+            size--;
+        }
+
+        return size;
+    }
+
     // Numbers are coloured this green (matches the class-name green used elsewhere) to stand out.
     private const byte GreenR = 0x8C, GreenG = 0xFF, GreenB = 0x5A;
 

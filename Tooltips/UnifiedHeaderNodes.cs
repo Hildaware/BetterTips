@@ -24,6 +24,7 @@ public sealed class UnifiedHeaderNodes
     // Geometry — the single source of truth for the unified header's layout (live + preview). Tune here.
     public const float HPad = 16f;               // horizontal padding from the tooltip edges (matches natives)
     public const uint NameFontSize = 16;
+    public const uint MinNameFontSize = 11;      // floor the name shrinks to when it won't fit the width
     public const uint PrimaryFontSize = 18;      // the big primary-stat number
     public const uint ItemLevelFontSize = 16;    // the Item Level / Req Level numbers
     public const uint LabelFontSize = 12;        // descriptor / Item Level / class-job-text labels
@@ -116,12 +117,15 @@ public sealed class UnifiedHeaderNodes
     {
         // Name (centered, rarity-colored) + thick divider. Prefer the rendered native name (raw SeString)
         // so the game's payload glyphs (HQ mark, etc.) show; fall back to the plain Lumina name (preview).
-        _name.String = data.NameRaw is not null
-            ? new ReadOnlySeString(data.NameRaw)
-            : data.Name;
+        ReadOnlySeString nameContent = data.NameRaw is not null ? new ReadOnlySeString(data.NameRaw) : data.Name;
+        _name.String = nameContent;
         _name.TextColor = RarityColor(data.Rarity);
         _name.Size = new Vector2(width, NameFontSize + 8f);
         _name.Position = new Vector2(0f, 0f);
+        // Shrink the font (down to the floor) if the name would overflow the tooltip's inner width, so long
+        // names stay on one line rather than clipping. The divider/body below anchor off NameFontSize (the box
+        // height is unchanged), so the layout doesn't shift when the name shrinks.
+        TooltipText.FitFontSize(_name, nameContent, NameFontSize, MinNameFontSize, width - HPad * 2f);
 
         var nameDividerY = NameFontSize + 10f;
         _nameDivider.Size = new Vector2(width - HPad * 2f, 6f);
