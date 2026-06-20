@@ -105,6 +105,8 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     // ids and target positions, no pointers or text — so re-applying it is cheap and allocation-free.
     private bool _hasPlan;
     private float _planTotalHeight;
+    private float _planAddonX = float.NaN;            // target addon screen-X when docked; NaN → leave position
+    private float _planAddonY = float.NaN;            // target addon screen-Y when docked; NaN → leave position
     private float _planControlY = float.NaN;          // NaN → control not placed (hidden/absent)
     private bool _planShowGear;
     private float _planGearY;
@@ -271,11 +273,29 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         return _watch;
     }
 
+    /// <summary>
+    ///     True while the in-game <b>HUD Layout</b> editor is open. We suspend <em>all</em> tooltip
+    ///     manipulation then: the editor owns every addon's position, so moving/resizing <c>ItemDetail</c>
+    ///     underneath it (our per-frame <c>SetPosition</c> for a Bottom/Right anchor especially) fights the
+    ///     editor's own writes and crashes the game (repro: bottom-anchored tooltip, then drag it in HUD edit).
+    ///     While it's open we make no native writes at all and leave the addon entirely to the editor; normal
+    ///     operation resumes on the next update after it closes.
+    /// </summary>
+    private bool IsHudLayoutActive()
+    {
+        var hud = _gameGui.GetAddonByName("_HudLayoutScreen", 1);
+        return !hud.IsNull && hud.IsVisible;
+    }
+
     // Content-change events: recompute the plan (and apply it).
     private void OnUpdateEvent(AddonEvent type, AddonArgs args)
     {
         try
         {
+            // The HUD Layout editor owns addon positions while it's open — don't touch the tooltip (fighting
+            // its position writes can crash the game).
+            if (IsHudLayoutActive()) return;
+
             var addon = (AddonItemDetail*)args.Addon.Address;
             if (addon is null) return;
 
@@ -300,6 +320,10 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
     {
         try
         {
+            // Suspend entirely while the HUD Layout editor is open (it owns addon positions; writing under it
+            // can crash). Leave the cached plan intact so we resume cleanly when the editor closes.
+            if (IsHudLayoutActive()) return;
+
             var addon = (AddonItemDetail*)args.Addon.Address;
             if (addon is null) return;
 
@@ -330,8 +354,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         if (!_config.Enabled || root is null)
         {
             // Put the tooltip back to its natural state (re-show what we hid) before going dormant — but only
-            // when the root is valid; a null root means the addon is tearing down.
-            if (root is not null) RestorePrevious(addon);
+            // when the root is valid; a null root means the addon is tearing down. (Position isn't restored: we
+            // never captured a natural position to restore to under the dock model; the game re-places the
+            // tooltip on its next natural layout.)
+            if (root is not null)
+                RestorePrevious(addon);
             Discard();
             _gearSet.Hide();
             _unified.Hide();
@@ -704,8 +731,16 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
 
         _planTotalHeight = y + BottomPadding;
 
-        // --- Size once, absolutely. No position change (top-left anchor). ---
+        // Docking: when the user has set a fixed dock origin (the "Move tooltip" window), place the tooltip so
+        // its chosen-corner sits exactly at that screen point. This is a PURE function of the stored origin +
+        // the chosen corner + our own size — we never read the live addon position, so it can't accumulate or
+        // drift (the bug the old natural-placement capture had). When no dock is set, leave the game's natural
+        // (cursor-relative) placement untouched. Screen footprint = node size × the addon's UI scale.
+        ComputeDockTarget(addon, root);
+
+        // --- Size once, absolutely, then dock to the configured corner. Both are absolute targets (idempotent). ---
         ApplySize(addon, root, rootId, frame);
+        ApplyPosition(addon, _planAddonX, _planAddonY);
 
         // Remember which sections we included, so a transient mid-refresh text blank can't drop them.
         _prevIncluded.Clear();
@@ -738,9 +773,34 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _planShowDescription = false;
         _planShowOwnership = false;
         _planControlY = float.NaN;
+        _planAddonX = float.NaN;
+        _planAddonY = float.NaN;
         _prevIncluded.Clear();
         _appliedHideIds.Clear();
         _appliedGroups.Clear();
+    }
+
+    /// <summary>
+    ///     Compute the dock target (<see cref="_planAddonX" />/<see cref="_planAddonY" />): the screen-space
+    ///     top-left the tooltip needs so its <see cref="Configuration.Configuration.Anchor" /> corner lands on
+    ///     the stored dock origin. Pure arithmetic on the config + our size — no live-position read, so it never
+    ///     drifts. Leaves both NaN (→ no move) when no dock origin is set.
+    /// </summary>
+    private void ComputeDockTarget(AddonItemDetail* addon, AtkResNode* root)
+    {
+        _planAddonX = float.NaN;
+        _planAddonY = float.NaN;
+        if (!_config.DockSet || root is null) return;
+
+        var scale = addon->Scale;
+        var w = root->Width * scale;            // tooltip's rendered (screen-space) width…
+        var h = _planTotalHeight * scale;       // …and height at the planned size
+        var left = _config.Anchor is TooltipAnchor.TopLeft or TooltipAnchor.BottomLeft;
+        var top = _config.Anchor is TooltipAnchor.TopLeft or TooltipAnchor.TopRight;
+
+        // Origin = where the chosen corner sits. Back out the top-left from it.
+        _planAddonX = left ? _config.DockOriginX : _config.DockOriginX - w;
+        _planAddonY = top ? _config.DockOriginY : _config.DockOriginY - h;
     }
 
     /// <summary>
@@ -934,6 +994,11 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         // Size — only touch it (and rebuild collision) when the game actually reset the height.
         if (root->Height != ClampUShort(_planTotalHeight))
             ApplySize(addon, root, rootId, FindFrame(addon, rootId));
+
+        // Position — re-assert the dock target (guarded). When docked, this snaps the tooltip back to the same
+        // absolute screen point each frame; with no dock set both are NaN and this is a no-op. No accumulation:
+        // the target is computed from config, never from the live position.
+        ApplyPosition(addon, _planAddonX, _planAddonY);
     }
 
     /// <summary>Set the addon + window-frame height to the plan's total, absolutely, and rebuild collision.</summary>
@@ -1188,6 +1253,27 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         return (ushort)value;
     }
 
+    private static short ClampShort(float value)
+    {
+        if (value < short.MinValue) return short.MinValue;
+        if (value > short.MaxValue) return short.MaxValue;
+        return (short)value;
+    }
+
+    /// <summary>
+    ///     Dock the addon at an <b>absolute</b> screen target (never a delta off the live position — that's what
+    ///     made the old natural-placement capture drift), written guarded (only when the addon isn't already
+    ///     there). A no-op when there's no dock target (<c>NaN</c> — no dock origin set).
+    /// </summary>
+    private static void ApplyPosition(AddonItemDetail* addon, float planAddonX, float planAddonY)
+    {
+        if (float.IsNaN(planAddonX) || float.IsNaN(planAddonY)) return;
+        var tx = ClampShort(planAddonX);
+        var ty = ClampShort(planAddonY);
+        if (addon->X != tx || addon->Y != ty)
+            addon->SetPosition(tx, ty);
+    }
+
     /// <summary>
     ///     Dev aid (<c>/btips watch</c>): once a second, log every block in the user's order — whether or not
     ///     the plan currently includes it — with its live <c>Y</c>/<c>Height</c>/parent, visibility, in-plan
@@ -1208,6 +1294,16 @@ public sealed unsafe class TooltipRelayoutController : IDisposable
         _log.Information(
             $"BetterTips WATCH: hasPlan={_hasPlan} reorder={_reorderActive} anchor={anchor:0} " +
             $"rootH={(root is not null ? root->Height : 0)} hovered={_lastHovered}");
+
+        // Docking: live addon position vs our applied target. `offFromPlan` ≈ 0 means the tooltip is sitting at
+        // the dock we computed. When no dock origin is set, planX/Y are NaN (we leave the game's placement).
+        var liveX = (float)addon->X;
+        var liveY = (float)addon->Y;
+        var offFromPlan = float.IsNaN(_planAddonY) ? float.NaN : liveY - _planAddonY;
+        _log.Information(
+            $"BetterTips WATCH:   DOCK set={_config.DockSet} corner={_config.Anchor} " +
+            $"origin=({_config.DockOriginX:0},{_config.DockOriginY:0}) live=({liveX:0},{liveY:0}) " +
+            $"planXY=({_planAddonX:0},{_planAddonY:0}) scale={addon->Scale:0.##} offFromPlan={offFromPlan:0.##}");
 
         foreach (var section in _sectionOrder)
         {

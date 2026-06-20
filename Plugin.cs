@@ -36,6 +36,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly ConfigWindow _configWindow;
     private readonly TooltipControlWindow _controlWindow;
     private readonly TooltipPreviewWindow _previewWindow;
+    private readonly TooltipDockWindow _dockWindow;
     private readonly GearSetBlockProvider _gearSet;
     private readonly UnifiedHeaderBlockProvider _unifiedHeader;
     private readonly NonEquipHeaderBlockProvider _nonEquipHeader;
@@ -220,7 +221,15 @@ public sealed class Plugin : IDalamudPlugin
             Title = "BetterTips — Preview",
             Size = new Vector2(400f, 780f)
         };
-        _controlWindow = new TooltipControlWindow(config, OnChanged, _previewWindow, log)
+        // The draggable "Move tooltip" dock window (sets where the tooltip docks). A companion of the control
+        // window — opened/closed with it, shown only while "Move tooltip" is on.
+        _dockWindow = new TooltipDockWindow(config, OnChanged, log)
+        {
+            InternalName = "BetterTipsDock",
+            Title = "BetterTips — Move tooltip",
+            Size = new Vector2(340f, 210f)
+        };
+        _controlWindow = new TooltipControlWindow(config, OnChanged, _previewWindow, _dockWindow, log)
         {
             InternalName = "BetterTipsControls",
             Title = "BetterTips",
@@ -264,6 +273,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             _controlWindow.Close();
             _previewWindow.Close();
+            _dockWindow.Close();
         }
         catch (Exception ex)
         {
@@ -299,6 +309,7 @@ public sealed class Plugin : IDalamudPlugin
         _collections.Dispose();
         _controlWindow.Dispose();
         _previewWindow.Dispose();
+        _dockWindow.Dispose();
         KamiToolKitLibrary.Dispose();
     }
 

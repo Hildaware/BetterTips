@@ -62,6 +62,24 @@ public sealed class ConfigWindow : Window
                 _config.EnhancedMode = enhanced;
                 changed = true;
             }
+
+            // Grow-from corner: which corner stays fixed as the tooltip is resized.
+            ImGui.TextDisabled("Grow-from corner (which corner stays fixed as the tooltip resizes):");
+            ImGui.SetNextItemWidth(180f);
+            if (ImGui.BeginCombo("##anchor", AnchorLabel(_config.Anchor)))
+            {
+                foreach (var anchor in Enum.GetValues<TooltipAnchor>())
+                    if (ImGui.Selectable(AnchorLabel(anchor), anchor == _config.Anchor))
+                    {
+                        _config.Anchor = anchor;
+                        changed = true;
+                    }
+
+                ImGui.EndCombo();
+            }
+
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip("Left/right only matters if the tooltip's width changes (it currently doesn't).");
         }
 
         ImGui.Separator();
@@ -260,4 +278,13 @@ public sealed class ConfigWindow : Window
 
     private static TooltipSectionInfo? FindDetail(TooltipSection section)
         => TooltipFieldMap.Sections.FirstOrDefault(s => s.Section == section);
+
+    private static string AnchorLabel(TooltipAnchor anchor) => anchor switch
+    {
+        TooltipAnchor.TopLeft => "Top-left",
+        TooltipAnchor.TopRight => "Top-right",
+        TooltipAnchor.BottomLeft => "Bottom-left",
+        TooltipAnchor.BottomRight => "Bottom-right",
+        _ => anchor.ToString()
+    };
 }

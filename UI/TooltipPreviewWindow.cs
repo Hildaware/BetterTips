@@ -121,6 +121,14 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
     {
         try
         {
+            // This is a companion of the control window — it must NOT be independently closed mid-session. KTK
+            // Close() deallocates (finalizes) the addon, and finalizing it after interaction crashed the game
+            // (freeing a TextNode → access violation). So hide its close button: the control window owns its
+            // lifetime (opens it, closes it in its own OnFinalize — the dispose path proven safe), and the
+            // "Show tooltip preview" toggle just shows/hides it via SetVisible (no finalize).
+            if (WindowNode is KamiToolKit.Nodes.WindowNode windowNode)
+                windowNode.ShowCloseButton = false;
+
             _cards.Clear();
             BuildPreview(ContentStartPosition, ContentSize);
             RefreshPreview();
@@ -162,6 +170,18 @@ public sealed unsafe class TooltipPreviewWindow : NativeAddon
         {
             _log.Error(ex, "BetterTips: error reflowing the tooltip preview.");
         }
+    }
+
+    /// <summary>
+    ///     Show or hide the preview <b>without</b> closing/finalizing it (the control window's "Show tooltip
+    ///     preview" toggle). KTK <c>Close()</c> deallocates the addon, which is unsafe to do independently
+    ///     mid-session — so we just flip the addon's visibility instead. The window stays allocated and is only
+    ///     ever finalized when the control window closes (its <c>OnFinalize</c> / plugin dispose).
+    /// </summary>
+    public void SetVisible(bool visible)
+    {
+        if (InternalAddon is not null)
+            InternalAddon->IsVisible = visible;
     }
 
     /// <summary>Re-stack the preview from current config. Called by the control window after an add/remove

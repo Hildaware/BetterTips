@@ -32,6 +32,31 @@ public sealed class Configuration : IPluginConfiguration
     public bool EnhancedMode { get; set; } = true;
 
     /// <summary>
+    ///     Which corner of the tooltip stays fixed as BetterTips resizes it (<see cref="TooltipAnchor" />).
+    ///     Default <see cref="TooltipAnchor.BottomLeft" />: the tooltip keeps its bottom edge where the game
+    ///     placed it and grows/shrinks upward (the window is moved down by however much we trimmed). A Top
+    ///     corner is the game's natural top-left growth (no window move). Left vs. right is reserved — the
+    ///     relayout never changes width today. A missing field in an old config keeps this initializer, so no
+    ///     migration is needed.
+    /// </summary>
+    public TooltipAnchor Anchor { get; set; } = TooltipAnchor.BottomLeft;
+
+    /// <summary>
+    ///     Whether the user has set a fixed dock origin via the "Move tooltip" window. When <c>true</c>, the
+    ///     tooltip is docked so its <see cref="Anchor" /> corner sits at (<see cref="DockOriginX" />,
+    ///     <see cref="DockOriginY" />) on screen — a value we control, never read back from the live tooltip, so
+    ///     it can't drift. When <c>false</c> the game's natural (cursor-relative) placement is left untouched.
+    /// </summary>
+    public bool DockSet { get; set; }
+
+    /// <summary>Screen X of the dock origin (the <see cref="Anchor" /> corner's pinned point). Only meaningful
+    /// when <see cref="DockSet" /> is true.</summary>
+    public float DockOriginX { get; set; }
+
+    /// <summary>Screen Y of the dock origin. Only meaningful when <see cref="DockSet" /> is true.</summary>
+    public float DockOriginY { get; set; }
+
+    /// <summary>
     ///     The finer, non-block detail hides (the category line inside the header, the extract/project
     ///     flags line, the "Advanced Melding Forbidden" notice, the control-hints row). Whole movable
     ///     blocks are hidden via <see cref="HiddenLayoutSections" /> instead. Anything not listed here is

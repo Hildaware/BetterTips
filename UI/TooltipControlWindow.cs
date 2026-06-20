@@ -25,10 +25,15 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
     private readonly Configuration.Configuration _config;
     private readonly Action _onChanged;
     private readonly TooltipPreviewWindow _preview;
+    private readonly TooltipDockWindow _dock;
     private readonly IPluginLog _log;
 
     private CheckboxNode? _showPreview;
     private CheckboxNode? _enhancedCheck;
+
+    // The "Move tooltip" switch: while on, the draggable dock window is shown so the user can position the
+    // tooltip's home; turning it off captures that position as the fixed dock origin.
+    private CheckboxNode? _moveTooltip;
 
     // Every Structure-group checkbox, kept so we can lock them (dimmed + click-suppressed) while the Enhanced
     // tooltip is on — its curated layout disregards the structure config, so editing it would be misleading.
@@ -40,6 +45,12 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
     // collapsed window is short rather than mostly-empty).
     private CheckboxNode? _structureToggle;
     private readonly List<NodeBase> _structureBody = [];
+
+    // Every content node (toggles, labels, hints, dropdown, section/detail checks). SetWindowSize →
+    // AtkUnitBase.SetSize rescales each child's Y by the window-height ratio (the game's anchor recalc), which
+    // would compress our absolutely-placed layout. We snapshot these nodes' intended Y and restore it around
+    // every SetWindowSize so the collapse/expand resize can't move the content.
+    private readonly List<NodeBase> _contentNodes = [];
     private bool _structureExpanded;
     private float _collapsedHeight, _expandedHeight;
     private const float HintLineHeight = 16f;
@@ -47,11 +58,12 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
     private static readonly Vector4 NormalLabelColor = ColorHelper.GetColor(8);
 
     public TooltipControlWindow(Configuration.Configuration config, Action onChanged,
-        TooltipPreviewWindow preview, IPluginLog log)
+        TooltipPreviewWindow preview, TooltipDockWindow dock, IPluginLog log)
     {
         _config = config;
         _onChanged = onChanged;
         _preview = preview;
+        _dock = dock;
         _log = log;
     }
 
@@ -66,8 +78,11 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             BuildGlobalToggles(x, ref y, width);
             BuildStructureGroup(x, ref y, width);
 
-            // The preview opens alongside the controls (and closes with them, in OnFinalize).
+            // The preview and the (hidden-by-default) dock window open alongside the controls and close with
+            // them (OnFinalize). Companions — never independently finalized mid-session.
             _preview.Open();
+            _dock.Open();
+            _dock.SetVisible(false);
         }
         catch (Exception ex)
         {
@@ -77,17 +92,23 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
 
     protected override void OnFinalize(AtkUnitBase* addon)
     {
+        // If the user left "Move tooltip" on, lock in the dock position before closing so the choice isn't lost.
+        if (_moveTooltip is { IsChecked: true }) _dock.CaptureOrigin();
         _preview.Close();
+        _dock.Close();
         _showPreview = null;
         _enhancedCheck = null;
+        _moveTooltip = null;
         _structureToggle = null;
         _structureChecks.Clear();
         _structureBody.Clear();
+        _contentNodes.Clear();
     }
 
     /// <summary>The app-level switches at the top of the window.</summary>
     private void BuildGlobalToggles(float x, ref float y, float width)
     {
+        _contentNodes.Clear();
         var size = new Vector2(width, CheckHeight);
 
         var enableCheck = new CheckboxNode
@@ -105,6 +126,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             _onChanged();
         };
         enableCheck.AttachNode(this);
+        _contentNodes.Add(enableCheck);
         y += RowHeight;
 
         _showPreview = new CheckboxNode
@@ -115,12 +137,11 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             Size = size
         };
         _showPreview.DisableAutoResize = true;
-        _showPreview.OnClick = isChecked =>
-        {
-            if (isChecked) _preview.Open();
-            else _preview.Close();
-        };
+        // Show/hide the preview WITHOUT closing it — the preview is a companion we open once (OnSetup) and only
+        // ever close in OnFinalize. Independently closing/finalizing it mid-session crashes the game.
+        _showPreview.OnClick = isChecked => _preview.SetVisible(isChecked);
         _showPreview.AttachNode(this);
+        _contentNodes.Add(_showPreview);
         y += RowHeight;
 
         // The product selector: Enhanced (curated, all-or-nothing) vs the modifier's Structure sub-group.
@@ -142,6 +163,34 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             _preview.Refresh();
         };
         _enhancedCheck.AttachNode(this);
+        _contentNodes.Add(_enhancedCheck);
+        y += RowHeight + 8f;
+
+        // "Move tooltip": while on, show the draggable dock window (with the corner dropdown + how-to). Turning
+        // it off captures that window's position as the tooltip's fixed dock origin.
+        _moveTooltip = new CheckboxNode
+        {
+            String = "Move tooltip (set where it docks)",
+            IsChecked = false,
+            Position = new Vector2(x, y),
+            Size = size
+        };
+        _moveTooltip.DisableAutoResize = true;
+        _moveTooltip.OnClick = isChecked =>
+        {
+            if (isChecked)
+            {
+                _dock.SetVisible(true);
+            }
+            else
+            {
+                _dock.CaptureOrigin();   // lock: this window's chosen corner becomes the dock origin
+                _dock.SetVisible(false);
+                _onChanged();            // re-dock the live tooltip immediately
+            }
+        };
+        _moveTooltip.AttachNode(this);
+        _contentNodes.Add(_moveTooltip);
         y += RowHeight + 8f;
     }
 
@@ -168,6 +217,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             ApplyStructureExpansion();
         };
         _structureToggle.AttachNode(this);
+        _contentNodes.Add(_structureToggle);
         y += RowHeight + 4f;
 
         // Window height when only the toggle shows. Content y already starts below the title bar, so the window
@@ -212,6 +262,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             check.AttachNode(this);
             _structureChecks.Add(check);
             _structureBody.Add(check);
+            _contentNodes.Add(check);
             y += RowHeight;
         }
 
@@ -249,6 +300,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             check.AttachNode(this);
             _structureChecks.Add(check);
             _structureBody.Add(check);
+            _contentNodes.Add(check);
             y += RowHeight;
         }
 
@@ -266,7 +318,19 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             node.IsVisible = _structureExpanded;
         if (_structureToggle is not null)
             _structureToggle.IsChecked = _structureExpanded;
+
+        // SetWindowSize → AtkUnitBase.SetSize rescales every child's Y by newHeight/oldHeight (the game's anchor
+        // recalc), which would compress our absolutely-placed content. Snapshot each content node's intended Y,
+        // resize, then restore it so the window-height change leaves the layout untouched. (X is unaffected —
+        // the width never changes.)
+        var intendedY = new float[_contentNodes.Count];
+        for (var i = 0; i < _contentNodes.Count; i++)
+            intendedY[i] = _contentNodes[i].Position.Y;
+
         SetWindowSize(Size.X, _structureExpanded ? _expandedHeight : _collapsedHeight);
+
+        for (var i = 0; i < _contentNodes.Count; i++)
+            _contentNodes[i].Position = new Vector2(_contentNodes[i].Position.X, intendedY[i]);
     }
 
     /// <summary>Dim + click-suppress (via the per-handler <see cref="Configuration.Configuration.EnhancedMode" />
@@ -300,6 +364,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
             Size = new Vector2(width, 20f)
         };
         label.AttachNode(this);
+        _contentNodes.Add(label);
         y += 22f;
         return label;
     }
@@ -326,6 +391,7 @@ public sealed unsafe class TooltipControlWindow : NativeAddon
         var lines = WrapText(hint, text, width);
         hint.String = string.Join('\n', lines);
         hint.Size = new Vector2(width, lines.Count * HintLineHeight);
+        _contentNodes.Add(hint);
         y += lines.Count * HintLineHeight + 2f;
         return hint;
     }
